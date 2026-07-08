@@ -132,6 +132,70 @@ def test_knowledge_bases_upload_chunking_and_edit_chunks(monkeypatch) -> None:
         assert chunk["tags"] == ["储能", "新能源车"]
 
 
+def test_knowledge_base_update_and_document_rechunk(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        created_base = client.post(
+            "/api/knowledge/bases",
+            json={
+                "name": "公告知识库",
+                "chunking_strategy": "paragraph",
+                "chunk_size": 300,
+                "chunk_overlap": 0,
+            },
+        )
+        assert created_base.status_code == 200
+        base = created_base.json()
+
+        updated_base = client.patch(
+            f"/api/knowledge/bases/{base['id']}",
+            json={
+                "chunking_strategy": "separators",
+                "chunk_size": 100,
+                "chunk_overlap": 8,
+                "separators": ["。"],
+            },
+        )
+        assert updated_base.status_code == 200
+        assert updated_base.json()["chunking_strategy"] == "separators"
+        assert updated_base.json()["chunk_size"] == 100
+        assert updated_base.json()["separators"] == ["。"]
+
+        created_document = client.post(
+            "/api/knowledge/documents",
+            json={
+                "knowledge_base_id": base["id"],
+                "title": "公司公告摘要",
+                "doc_type": "announcement",
+                "source": "manual",
+                "content": "第一段公告内容较长。" * 10 + "\n\n第二段包含经营情况。" * 10,
+                "chunking_strategy": "paragraph",
+                "chunk_size": 500,
+                "chunk_overlap": 0,
+            },
+        )
+        assert created_document.status_code == 200
+        document = created_document.json()
+        original_chunk_count = document["chunk_count"]
+
+        rechunked = client.post(
+            f"/api/knowledge/documents/{document['id']}/rechunk",
+            json={
+                "chunking_strategy": "characters",
+                "chunk_size": 100,
+                "chunk_overlap": 5,
+                "separators": ["。"],
+            },
+        )
+        assert rechunked.status_code == 200
+        payload = rechunked.json()
+        assert payload["chunking_strategy"] == "characters"
+        assert payload["chunk_size"] == 100
+        assert payload["chunk_overlap"] == 5
+        assert payload["chunk_count"] >= original_chunk_count
+
+
 def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:
     def fake_embed_texts(texts: list[str]) -> list[list[float]]:
         vectors = []

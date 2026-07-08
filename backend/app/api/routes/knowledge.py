@@ -6,11 +6,13 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseListResponse,
     KnowledgeBaseRead,
+    KnowledgeBaseUpdateRequest,
     KnowledgeChunkRead,
     KnowledgeChunkUpdateRequest,
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentDetail,
     KnowledgeDocumentListResponse,
+    KnowledgeDocumentRechunkRequest,
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
     KnowledgeFaissStatus,
@@ -26,10 +28,12 @@ from app.services.knowledge_base import (
     get_document,
     list_knowledge_bases,
     list_documents,
+    rechunk_document,
     reindex_all_documents,
     reindex_document,
     search_knowledge,
     update_chunk,
+    update_knowledge_base,
     update_document,
 )
 from app.services.knowledge_faiss import faiss_status, rebuild_faiss_index
@@ -48,6 +52,18 @@ def create_base(
     db: Session = Depends(get_db),
 ) -> KnowledgeBaseRead:
     return create_knowledge_base(db, payload)
+
+
+@router.patch("/bases/{base_id}", response_model=KnowledgeBaseRead)
+def patch_base(
+    base_id: int,
+    payload: KnowledgeBaseUpdateRequest,
+    db: Session = Depends(get_db),
+) -> KnowledgeBaseRead:
+    result = update_knowledge_base(db, base_id, payload)
+    if not result:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+    return result
 
 
 @router.get("/documents", response_model=KnowledgeDocumentListResponse)
@@ -136,6 +152,18 @@ def remove_document(document_id: int, db: Session = Depends(get_db)) -> Knowledg
 @router.post("/documents/{document_id}/reindex", response_model=KnowledgeDocumentDetail)
 def reindex(document_id: int, db: Session = Depends(get_db)) -> KnowledgeDocumentDetail:
     result = reindex_document(db, document_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Knowledge document not found.")
+    return result
+
+
+@router.post("/documents/{document_id}/rechunk", response_model=KnowledgeDocumentDetail)
+def rechunk(
+    document_id: int,
+    payload: KnowledgeDocumentRechunkRequest,
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentDetail:
+    result = rechunk_document(db, document_id, payload)
     if not result:
         raise HTTPException(status_code=404, detail="Knowledge document not found.")
     return result

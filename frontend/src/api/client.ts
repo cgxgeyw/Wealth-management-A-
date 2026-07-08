@@ -198,6 +198,15 @@ export interface KnowledgeBaseCreatePayload {
   separators?: string[];
 }
 
+export interface KnowledgeBaseUpdatePayload {
+  name?: string;
+  description?: string;
+  chunking_strategy?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separators?: string[];
+}
+
 export interface KnowledgeChunk {
   id: number;
   document_id: number;
@@ -246,6 +255,13 @@ export interface KnowledgeUploadOptions {
 export interface KnowledgeChunkUpdatePayload {
   content?: string;
   tags?: string[];
+}
+
+export interface KnowledgeDocumentRechunkPayload {
+  chunking_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  separators: string[];
 }
 
 export interface KnowledgeSearchItem {
@@ -820,6 +836,10 @@ export function createKnowledgeBase(payload: KnowledgeBaseCreatePayload): Promis
   return postJson<KnowledgeBase>("/api/knowledge/bases", payload);
 }
 
+export function updateKnowledgeBase(baseId: number, payload: KnowledgeBaseUpdatePayload): Promise<KnowledgeBase> {
+  return patchJson<KnowledgeBase>(`/api/knowledge/bases/${baseId}`, payload);
+}
+
 export function fetchKnowledgeDocuments(
   q = "",
   limit = 50,
@@ -886,6 +906,13 @@ export function deleteKnowledgeDocument(documentId: number): Promise<KnowledgeDo
 
 export function reindexKnowledgeDocument(documentId: number): Promise<KnowledgeDocumentDetail> {
   return postJson<KnowledgeDocumentDetail>(`/api/knowledge/documents/${documentId}/reindex`, {});
+}
+
+export function rechunkKnowledgeDocument(
+  documentId: number,
+  payload: KnowledgeDocumentRechunkPayload
+): Promise<KnowledgeDocumentDetail> {
+  return postJson<KnowledgeDocumentDetail>(`/api/knowledge/documents/${documentId}/rechunk`, payload);
 }
 
 export function reindexAllKnowledgeDocuments(): Promise<KnowledgeReindexAllResponse> {

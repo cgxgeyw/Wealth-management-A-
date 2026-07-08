@@ -17,10 +17,12 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseListResponse,
     KnowledgeBaseRead,
+    KnowledgeBaseUpdateRequest,
     KnowledgeChunkRead,
     KnowledgeChunkUpdateRequest,
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentDetail,
+    KnowledgeDocumentRechunkRequest,
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
     KnowledgeReindexAllResponse,
@@ -101,6 +103,29 @@ def create_knowledge_base(db: Session, payload: KnowledgeBaseCreateRequest) -> K
         chunk_overlap=payload.chunk_overlap,
         separators_json=json.dumps(_normalize_list(payload.separators), ensure_ascii=False),
     )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return knowledge_base_read(db, item)
+
+
+def update_knowledge_base(db: Session, base_id: int, payload: KnowledgeBaseUpdateRequest) -> KnowledgeBaseRead | None:
+    ensure_knowledge_fts(db)
+    item = db.get(KnowledgeBase, base_id)
+    if not item:
+        return None
+    if payload.name is not None:
+        item.name = payload.name.strip()
+    if payload.description is not None:
+        item.description = payload.description.strip()
+    if payload.chunking_strategy is not None:
+        item.chunking_strategy = payload.chunking_strategy
+    if payload.chunk_size is not None:
+        item.chunk_size = payload.chunk_size
+    if payload.chunk_overlap is not None:
+        item.chunk_overlap = payload.chunk_overlap
+    if payload.separators is not None:
+        item.separators_json = json.dumps(_normalize_list(payload.separators), ensure_ascii=False)
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -258,6 +283,31 @@ def reindex_document(db: Session, document_id: int) -> KnowledgeDocumentDetail |
     document = db.get(KnowledgeDocument, document_id)
     if not document:
         return None
+    _replace_chunks(db, document)
+    document.status = "indexed"
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    rebuild_faiss_index(db)
+    return document_detail(db, document)
+
+
+def rechunk_document(
+    db: Session,
+    document_id: int,
+    payload: KnowledgeDocumentRechunkRequest,
+) -> KnowledgeDocumentDetail | None:
+    ensure_knowledge_fts(db)
+    document = db.get(KnowledgeDocument, document_id)
+    if not document:
+        return None
+    document.chunking_strategy = payload.chunking_strategy
+    document.chunk_size = payload.chunk_size
+    document.chunk_overlap = payload.chunk_overlap
+    document.separators_json = json.dumps(_normalize_list(payload.separators), ensure_ascii=False)
+    document.status = "indexing"
+    db.add(document)
+    db.flush()
     _replace_chunks(db, document)
     document.status = "indexed"
     db.add(document)

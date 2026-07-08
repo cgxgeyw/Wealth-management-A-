@@ -28,6 +28,7 @@ import {
   fetchKnowledgeDocuments,
   reindexAllKnowledgeDocuments,
   reindexKnowledgeDocument,
+  rechunkKnowledgeDocument,
   rebuildKnowledgeFaissIndex,
   renderAgentPrompt,
   rollbackAgent,
@@ -35,6 +36,7 @@ import {
   searchKnowledge,
   testRunAgent,
   updateAgent,
+  updateKnowledgeBase,
   updateKnowledgeChunk,
   uploadKnowledgeDocument,
   type AgentConfig,
@@ -562,6 +564,8 @@ function KnowledgeBasePage() {
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
   const [reindexingAll, setReindexingAll] = useState(false);
+  const [savingBaseConfig, setSavingBaseConfig] = useState(false);
+  const [rechunkingDocument, setRechunkingDocument] = useState(false);
 
   const selectedBase = useMemo(
     () => knowledgeBases.find((item) => item.id === selectedBaseId) ?? knowledgeBases[0] ?? null,
@@ -638,6 +642,30 @@ function KnowledgeBasePage() {
       setMessage(`已创建知识库：${created.name}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "知识库创建失败");
+    }
+  }
+
+  async function saveBaseConfig() {
+    if (!selectedBase) {
+      setMessage("请先选择知识库");
+      return;
+    }
+    setSavingBaseConfig(true);
+    try {
+      const updated = await updateKnowledgeBase(selectedBase.id, {
+        name: selectedBase.name,
+        description: selectedBase.description,
+        chunking_strategy: chunkingStrategy,
+        chunk_size: chunkSize,
+        chunk_overlap: chunkOverlap,
+        separators: parseSeparators(separatorsText)
+      });
+      await loadKnowledgeBases(updated.id);
+      setMessage(`已保存知识库配置：${updated.name}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "知识库配置保存失败");
+    } finally {
+      setSavingBaseConfig(false);
     }
   }
 
@@ -722,6 +750,30 @@ function KnowledgeBasePage() {
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档重建失败");
+    }
+  }
+
+  async function rechunkSelectedDocument() {
+    if (!selectedDocument) {
+      setMessage("请先打开一篇文档");
+      return;
+    }
+    setRechunkingDocument(true);
+    try {
+      const detail = await rechunkKnowledgeDocument(selectedDocument.id, {
+        chunking_strategy: chunkingStrategy,
+        chunk_size: chunkSize,
+        chunk_overlap: chunkOverlap,
+        separators: parseSeparators(separatorsText)
+      });
+      setSelectedDocument(detail);
+      setMessage(`已重新切分：${detail.title}，${detail.chunk_count} 个 chunks`);
+      await loadDocuments(docQuery, selectedBaseId);
+      await loadFaissStatus();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "文档重新切分失败");
+    } finally {
+      setRechunkingDocument(false);
     }
   }
 
@@ -814,6 +866,14 @@ function KnowledgeBasePage() {
             <label>特殊分隔符
               <input className="input mono" value={separatorsText} onChange={(event) => setSeparatorsText(event.target.value)} />
             </label>
+            <div className="button-stack inline">
+              <button className="btn btn-secondary" disabled={savingBaseConfig} onClick={saveBaseConfig} type="button">
+                {savingBaseConfig ? "保存中..." : "保存为知识库默认配置"}
+              </button>
+              <button className="btn btn-secondary" disabled={!selectedDocument || rechunkingDocument} onClick={rechunkSelectedDocument} type="button">
+                {rechunkingDocument ? "切分中..." : "按当前配置重新切分文档"}
+              </button>
+            </div>
           </div>
           <div className="upload-zone">
             <input
@@ -887,6 +947,9 @@ function KnowledgeBasePage() {
                   <span className="label">{selectedDocument.doc_type} · {selectedDocument.source} · {selectedDocument.chunking_strategy}</span>
                   <h3>{selectedDocument.title}</h3>
                   <p>{selectedDocument.summary || "暂无摘要"}</p>
+                  <small className="mono">
+                    chunk config: {selectedDocument.chunk_size}/{selectedDocument.chunk_overlap} · {selectedDocument.separators.map(escapeSeparatorForInput).join("|")}
+                  </small>
                 </div>
                 <StatusBadge tone={selectedDocument.enabled ? "green" : "amber"}>
                   {selectedDocument.enabled ? "enabled" : "disabled"}

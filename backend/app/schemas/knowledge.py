@@ -67,6 +67,15 @@ class KnowledgeBaseCreateRequest(BaseModel):
     separators: list[str] = Field(default_factory=lambda: ["\n\n", "\n", "。", "；"])
 
 
+class KnowledgeBaseUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    chunking_strategy: str | None = None
+    chunk_size: int | None = Field(default=None, ge=100, le=8000)
+    chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
+    separators: list[str] | None = None
+
+
 class KnowledgeBaseRead(BaseModel):
     id: int
     name: str
@@ -98,6 +107,13 @@ class KnowledgeChunkRead(BaseModel):
 class KnowledgeChunkUpdateRequest(BaseModel):
     content: str | None = Field(default=None, min_length=1)
     tags: list[str] | None = None
+
+
+class KnowledgeDocumentRechunkRequest(BaseModel):
+    chunking_strategy: str = "paragraph"
+    chunk_size: int = Field(default=900, ge=100, le=8000)
+    chunk_overlap: int = Field(default=120, ge=0, le=2000)
+    separators: list[str] = Field(default_factory=lambda: ["\n\n", "\n", "。", "；"])
 
 
 class KnowledgeDocumentDetail(KnowledgeDocumentRead):
