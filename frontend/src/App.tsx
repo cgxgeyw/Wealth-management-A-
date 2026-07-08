@@ -252,6 +252,7 @@ function AgentManagementPage() {
   const [testResult, setTestResult] = useState<AgentTestRunResponse | null>(null);
   const [toolSpecs, setToolSpecs] = useState<AgentToolSpec[]>([]);
   const [toolResult, setToolResult] = useState<AgentToolRunResponse | null>(null);
+  const [toolSearch, setToolSearch] = useState("");
   const [testInput, setTestInput] = useState("用 300750 的最新日 K 快照测试提示词输出。");
   const [message, setMessage] = useState("");
 
@@ -379,6 +380,12 @@ function AgentManagementPage() {
       output_schema: {}
     }))
   ];
+  const normalizedToolSearch = toolSearch.trim().toLowerCase();
+  const visibleTools = normalizedToolSearch
+    ? allTools.filter((tool) =>
+        `${tool.name} ${tool.key} ${tool.description} ${tool.category}`.toLowerCase().includes(normalizedToolSearch)
+      )
+    : allTools;
 
   return (
     <div className="page-grid agent-layout">
@@ -394,7 +401,7 @@ function AgentManagementPage() {
         </div>
       </Panel>
 
-      <div className="main-column">
+      <div className="main-column agent-detail-scroll">
         {message ? <div className="notice">{message}</div> : null}
         <Panel
           title={selectedAgent ? `${selectedAgent.name} Agent` : "Agent 配置"}
@@ -472,15 +479,24 @@ function AgentManagementPage() {
         ) : null}
       </div>
 
-      <Panel title="工具权限">
+      <Panel title="工具权限" className="tool-permission-panel">
+        <div className="tool-search">
+          <input
+            className="input"
+            placeholder="搜索工具名、tool_key 或描述"
+            value={toolSearch}
+            onChange={(event) => setToolSearch(event.target.value)}
+          />
+        </div>
         <div className="permission-list">
-          {allTools.map((tool) => (
+          {visibleTools.map((tool) => (
             <label className="check-line" key={tool.key} title={tool.description}>
               <input checked={form?.tools.includes(tool.key) ?? false} onChange={(event) => updateTool(tool.key, event.target.checked)} type="checkbox" />
               <span>{tool.name}</span>
               <small>{tool.key}{tool.enabled ? "" : " · 未接执行器"}</small>
             </label>
           ))}
+          {visibleTools.length === 0 ? <div className="empty-hint">没有匹配的工具</div> : null}
         </div>
       </Panel>
     </div>

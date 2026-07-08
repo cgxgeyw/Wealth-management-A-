@@ -198,6 +198,40 @@ button {
 
 .agent-layout {
   grid-template-columns: 260px minmax(0, 1fr) 260px;
+  height: calc(100vh - 124px);
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.agent-layout > .panel,
+.agent-detail-scroll,
+.tool-permission-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agent-layout > .panel:first-child,
+.agent-detail-scroll {
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tool-permission-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.tool-search {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  background: var(--panel-strong);
+}
+
+.tool-permission-panel .permission-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .chat-layout {
