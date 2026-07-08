@@ -773,6 +773,19 @@ export function createKnowledgeDocument(payload: KnowledgeDocumentCreatePayload)
   return postJson<KnowledgeDocumentDetail>("/api/knowledge/documents", payload);
 }
 
+export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocumentDetail> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch("/api/knowledge/documents/upload", {
+    method: "POST",
+    body
+  });
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  return response.json() as Promise<KnowledgeDocumentDetail>;
+}
+
 export function deleteKnowledgeDocument(documentId: number): Promise<KnowledgeDocument> {
   return deleteJson<KnowledgeDocument>(`/api/knowledge/documents/${documentId}`);
 }

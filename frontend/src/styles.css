@@ -676,6 +676,60 @@ tbody tr:hover,
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.upload-zone {
+  position: relative;
+  display: grid;
+  min-height: 132px;
+  margin: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  padding: 18px;
+  place-items: center;
+  background: #fbfcfe;
+  text-align: center;
+}
+
+.upload-zone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-zone div {
+  display: grid;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.upload-zone strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.upload-zone span,
+.file-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.file-list div:not(.empty-hint) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 9px 10px;
+  background: var(--panel);
+}
+
 .input,
 .textarea {
   width: 100%;

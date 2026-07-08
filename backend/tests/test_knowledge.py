@@ -49,6 +49,31 @@ def test_knowledge_document_create_search_and_tool(monkeypatch) -> None:
     assert tool_response.json()["output"]["items"]
 
 
+def test_knowledge_document_upload_extracts_file_content(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        uploaded = client.post(
+            "/api/knowledge/documents/upload",
+            files={
+                "file": (
+                    "储能行业调研.md",
+                    "# 储能行业调研\n\n电网侧储能招标增加，PCS 和电池系统需求改善。",
+                    "text/markdown",
+                )
+            },
+        )
+
+    assert uploaded.status_code == 200
+    document = uploaded.json()
+    assert document["title"] == "储能行业调研"
+    assert document["doc_type"] == "markdown"
+    assert document["source"] == "upload:储能行业调研.md"
+    assert document["chunk_count"] >= 1
+    assert "电网侧储能" in document["content"]
+    assert document["metadata"]["filename"] == "储能行业调研.md"
+
+
 def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:
     def fake_embed_texts(texts: list[str]) -> list[list[float]]:
         vectors = []

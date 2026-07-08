@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createAgentRun,
-  createKnowledgeDocument,
   deleteKnowledgeDocument,
   fetchAgentRuns,
   fetchAgentVersions,
@@ -34,6 +33,7 @@ import {
   searchKnowledge,
   testRunAgent,
   updateAgent,
+  uploadKnowledgeDocument,
   type AgentConfig,
   type AgentPromptVersion,
   type AgentRenderResponse,
@@ -543,11 +543,10 @@ function KnowledgeBasePage() {
   const [searchDocTypes, setSearchDocTypes] = useState("");
   const [searchTags, setSearchTags] = useState("");
   const [searchTopK, setSearchTopK] = useState(8);
-  const [title, setTitle] = useState("宁德时代储能业务笔记");
   const [symbols, setSymbols] = useState("300750");
-  const [tags, setTags] = useState("储能,宁德时代");
-  const [content, setContent] = useState("宁德时代储能系统出货增长。海外大客户订单是主要驱动。\n\n毛利率改善来自原材料成本下降与产品结构优化。");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [message, setMessage] = useState("");
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
   const [reindexingAll, setReindexingAll] = useState(false);
 
@@ -567,22 +566,28 @@ function KnowledgeBasePage() {
     });
   }, []);
 
-  async function submitDocument() {
+  async function uploadSelectedFiles() {
+    if (selectedFiles.length === 0) {
+      setMessage("请选择要导入的资料文件");
+      return;
+    }
+    setUploadingFiles(true);
     try {
-      const created = await createKnowledgeDocument({
-        title,
-        content,
-        doc_type: "note",
-        source: "manual",
-        symbols: splitCsv(symbols),
-        tags: splitCsv(tags)
-      });
-      setMessage(`已入库：${created.title}，${created.chunk_count} 个 chunks`);
-      setSelectedDocument(created);
+      const uploaded: KnowledgeDocumentDetail[] = [];
+      for (const file of selectedFiles) {
+        uploaded.push(await uploadKnowledgeDocument(file));
+      }
+      const latest = uploaded[uploaded.length - 1];
+      setMessage(`已导入 ${uploaded.length} 个文件，最新文档：${latest.title}`);
+      setSelectedDocument(latest);
+      setSearchQuery(latest.title);
+      setSelectedFiles([]);
       await loadDocuments("");
       await loadFaissStatus();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "文档入库失败");
+      setMessage(err instanceof Error ? err.message : "文件导入失败");
+    } finally {
+      setUploadingFiles(false);
     }
   }
 
@@ -675,17 +680,29 @@ function KnowledgeBasePage() {
         {message ? <div className="notice">{message}</div> : null}
         <Panel
           title="资料导入"
-          description="第一版支持纯文本入库、自动分块、FTS 检索和 citation 返回。PDF/Word 解析后续接入。"
-          actions={<button className="btn btn-primary" onClick={submitDocument} type="button">入库并索引</button>}
+          description="上传研报、公告、纪要、策略文档等资料，系统自动解析标题、正文、类型和标签并建立索引。"
+          actions={<button className="btn btn-primary" disabled={uploadingFiles} onClick={uploadSelectedFiles} type="button">{uploadingFiles ? "导入中..." : "上传并索引"}</button>}
         >
-          <div className="form-grid">
-            <label>标题<input className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-            <label>股票代码<input className="input mono" value={symbols} onChange={(event) => setSymbols(event.target.value)} /></label>
-            <label>标签<input className="input" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
-            <label>类型<input className="input" value="note" readOnly /></label>
+          <div className="upload-zone">
+            <input
+              multiple
+              type="file"
+              accept=".txt,.md,.csv,.json,.html,.htm,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
+            />
+            <div>
+              <strong>{selectedFiles.length ? `已选择 ${selectedFiles.length} 个文件` : "选择资料文件"}</strong>
+              <span>支持 TXT、Markdown、CSV、JSON、HTML；PDF 和 Word 会走专用解析器。</span>
+            </div>
           </div>
-          <div className="form-stack">
-            <label>正文<textarea className="textarea" value={content} onChange={(event) => setContent(event.target.value)} /></label>
+          <div className="file-list">
+            {selectedFiles.map((file) => (
+              <div key={`${file.name}-${file.size}`}>
+                <span>{file.name}</span>
+                <small className="mono">{Math.ceil(file.size / 1024)} KB</small>
+              </div>
+            ))}
+            {selectedFiles.length === 0 ? <div className="empty-hint">成熟 RAG 的导入入口应该以文件为中心，标题、来源和元数据由系统自动提取。</div> : null}
           </div>
         </Panel>
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, select, text
@@ -60,6 +62,25 @@ def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> Kno
     db.refresh(document)
     rebuild_faiss_index(db)
     return document_detail(db, document)
+
+
+def create_document_from_file(
+    db: Session,
+    filename: str,
+    content_type: str,
+    data: bytes,
+) -> KnowledgeDocumentDetail:
+    parsed = _parse_uploaded_file(filename, content_type, data)
+    payload = KnowledgeDocumentCreateRequest(
+        title=parsed["title"],
+        content=parsed["content"],
+        doc_type=parsed["doc_type"],
+        source=f"upload:{filename}",
+        symbols=[],
+        tags=parsed["tags"],
+        metadata=parsed["metadata"],
+    )
+    return create_document(db, payload)
 
 
 def list_documents(db: Session, q: str = "", limit: int = 50) -> list[KnowledgeDocumentRead]:
@@ -229,6 +250,90 @@ def document_detail(db: Session, document: KnowledgeDocument) -> KnowledgeDocume
             for chunk in chunks
         ],
     )
+
+
+def _parse_uploaded_file(filename: str, content_type: str, data: bytes) -> dict[str, Any]:
+    suffix = Path(filename).suffix.lower()
+    title = Path(filename).stem.strip() or "未命名资料"
+    if suffix in {".txt", ".md", ".csv", ".json", ".html", ".htm"} or content_type.startswith("text/"):
+        content = _decode_text(data)
+    elif suffix == ".pdf":
+        content = _extract_pdf_text(data)
+    elif suffix == ".docx":
+        content = _extract_docx_text(data)
+    else:
+        content = _decode_text(data)
+    content = content.strip()
+    if not content:
+        raise ValueError("Uploaded file has no extractable text.")
+    return {
+        "title": title,
+        "content": content,
+        "doc_type": _doc_type_from_suffix(suffix),
+        "tags": _tags_from_filename(filename),
+        "metadata": {
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": len(data),
+            "parser": _parser_name(suffix, content_type),
+        },
+    }
+
+
+def _decode_text(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="ignore")
+
+
+def _extract_pdf_text(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise ValueError("PDF parsing requires pypdf. Install backend[rag].") from exc
+    reader = PdfReader(io.BytesIO(data))
+    return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages)
+
+
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise ValueError("DOCX parsing requires python-docx. Install backend[rag].") from exc
+    document = Document(io.BytesIO(data))
+    paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+    return "\n\n".join(paragraphs)
+
+
+def _doc_type_from_suffix(suffix: str) -> str:
+    mapping = {
+        ".pdf": "pdf",
+        ".docx": "document",
+        ".md": "markdown",
+        ".txt": "text",
+        ".csv": "table",
+        ".json": "data",
+    }
+    return mapping.get(suffix, "document")
+
+
+def _parser_name(suffix: str, content_type: str) -> str:
+    if suffix == ".pdf":
+        return "pypdf"
+    if suffix == ".docx":
+        return "python-docx"
+    if suffix or content_type.startswith("text/"):
+        return "text"
+    return "text-fallback"
+
+
+def _tags_from_filename(filename: str) -> list[str]:
+    stem = Path(filename).stem
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_]{2,}", stem)
+    return tokens[:6]
 
 
 def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:

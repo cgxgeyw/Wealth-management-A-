@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -15,6 +15,7 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge_base import (
     create_document,
+    create_document_from_file,
     delete_document,
     get_document,
     list_documents,
@@ -39,6 +40,25 @@ def create_knowledge_document(
     db: Session = Depends(get_db),
 ) -> KnowledgeDocumentDetail:
     return create_document(db, payload)
+
+
+@router.post("/documents/upload", response_model=KnowledgeDocumentDetail)
+async def upload_knowledge_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentDetail:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    try:
+        return create_document_from_file(
+            db,
+            filename=file.filename or "uploaded-document",
+            content_type=file.content_type or "application/octet-stream",
+            data=data,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/documents/reindex-all", response_model=KnowledgeReindexAllResponse)
