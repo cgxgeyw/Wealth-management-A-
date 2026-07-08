@@ -215,6 +215,18 @@ export interface KnowledgeSearchResponse {
   items: KnowledgeSearchItem[];
 }
 
+export interface KnowledgeFaissStatus {
+  enabled: boolean;
+  available: boolean;
+  indexed: boolean;
+  model: string;
+  dimension: number;
+  vector_count: number;
+  index_path: string;
+  mapping_path: string;
+  message: string;
+}
+
 export interface DataProvider {
   id: number;
   key: string;
@@ -751,6 +763,14 @@ export function searchKnowledge(payload: {
   require_citations?: boolean;
 }): Promise<KnowledgeSearchResponse> {
   return postJson<KnowledgeSearchResponse>("/api/knowledge/search", payload);
+}
+
+export function fetchKnowledgeFaissStatus(): Promise<KnowledgeFaissStatus> {
+  return getJson<KnowledgeFaissStatus>("/api/knowledge/faiss/status");
+}
+
+export function rebuildKnowledgeFaissIndex(): Promise<KnowledgeFaissStatus> {
+  return postJson<KnowledgeFaissStatus>("/api/knowledge/faiss/rebuild", {});
 }
 
 export function fetchDataProviders(): Promise<DataProviderListResponse> {

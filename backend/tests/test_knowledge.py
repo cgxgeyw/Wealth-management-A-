@@ -84,3 +84,49 @@ def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:
     items = searched.json()["items"]
     assert items
     assert items[0]["title"] == "海外储能订单纪要"
+
+
+def test_knowledge_faiss_status_endpoint_is_optional() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/knowledge/faiss/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] in (True, False)
+    assert payload["available"] in (True, False)
+    assert payload["model"]
+    assert "message" in payload
+
+
+def test_knowledge_vector_search_can_hydrate_faiss_hits(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[0.5, 0.5] for _ in texts])
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/knowledge/documents",
+            json={
+                "title": "电网侧储能调研",
+                "doc_type": "research",
+                "source": "manual",
+                "content": "电网侧储能项目招标节奏加快，逆变器和电池系统供应商受益。",
+                "symbols": ["300750"],
+                "tags": ["储能", "电网"],
+            },
+        )
+        assert created.status_code == 200
+        chunk_id = created.json()["chunks"][0]["id"]
+        monkeypatch.setattr(
+            "app.services.knowledge_base.search_faiss",
+            lambda query_vector, top_k: [{"chunk_id": chunk_id, "vector_score": 0.93}],
+        )
+
+        searched = client.post(
+            "/api/knowledge/search",
+            json={"query": "一个只依赖向量召回的查询", "symbols": ["300750"], "top_k": 3},
+        )
+
+    assert searched.status_code == 200
+    items = searched.json()["items"]
+    assert items
+    assert items[0]["chunk_id"] == chunk_id
+    assert items[0]["title"] == "电网侧储能调研"

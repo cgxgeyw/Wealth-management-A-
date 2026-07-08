@@ -8,6 +8,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
+    KnowledgeFaissStatus,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
 )
@@ -20,6 +21,7 @@ from app.services.knowledge_base import (
     search_knowledge,
     update_document,
 )
+from app.services.knowledge_faiss import faiss_status, rebuild_faiss_index
 
 router = APIRouter()
 
@@ -77,3 +79,13 @@ def reindex(document_id: int, db: Session = Depends(get_db)) -> KnowledgeDocumen
 @router.post("/search", response_model=KnowledgeSearchResponse)
 def search(payload: KnowledgeSearchRequest, db: Session = Depends(get_db)) -> KnowledgeSearchResponse:
     return search_knowledge(db, payload)
+
+
+@router.get("/faiss/status", response_model=KnowledgeFaissStatus)
+def get_faiss_status() -> KnowledgeFaissStatus:
+    return faiss_status()
+
+
+@router.post("/faiss/rebuild", response_model=KnowledgeFaissStatus)
+def rebuild_faiss(db: Session = Depends(get_db)) -> KnowledgeFaissStatus:
+    return rebuild_faiss_index(db)

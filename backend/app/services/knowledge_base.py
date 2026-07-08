@@ -21,6 +21,7 @@ from app.schemas.knowledge import (
     KnowledgeSearchResponse,
 )
 from app.services.embedding_client import EmbeddingError, embed_texts
+from app.services.knowledge_faiss import search_faiss
 
 
 def ensure_knowledge_fts(db: Session) -> None:
@@ -318,6 +319,52 @@ def _vector_search(db: Session, payload: KnowledgeSearchRequest) -> list[dict[st
         query_vector = embed_texts([payload.query])[0]
     except (EmbeddingError, IndexError):
         return []
+    faiss_rows = _faiss_vector_search(db, payload, query_vector)
+    if faiss_rows:
+        return faiss_rows
+    return _sqlite_vector_search(db, payload, query_vector)
+
+
+def _faiss_vector_search(
+    db: Session,
+    payload: KnowledgeSearchRequest,
+    query_vector: list[float],
+) -> list[dict[str, Any]]:
+    hits = search_faiss(query_vector, max(payload.top_k * 4, 20))
+    if not hits:
+        return []
+    score_by_chunk_id = {int(hit["chunk_id"]): float(hit.get("vector_score") or 0.0) for hit in hits}
+    rows = db.execute(
+        select(
+            KnowledgeChunk.id.label("chunk_id"),
+            KnowledgeChunk.document_id,
+            KnowledgeChunk.content,
+            KnowledgeChunk.summary,
+            KnowledgeChunk.metadata_json,
+            KnowledgeDocument.title,
+            KnowledgeDocument.source,
+            KnowledgeDocument.doc_type,
+            KnowledgeDocument.symbols_json,
+            KnowledgeDocument.tags_json,
+        )
+        .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+        .where(KnowledgeDocument.enabled.is_(True), KnowledgeChunk.id.in_(score_by_chunk_id))
+    ).mappings()
+    scored: list[dict[str, Any]] = []
+    for row in rows:
+        data = dict(row)
+        similarity = score_by_chunk_id.get(int(data["chunk_id"]), 0.0)
+        data["rank"] = -similarity
+        data["vector_score"] = similarity
+        scored.append(data)
+    return _filter_rows(sorted(scored, key=lambda item: item["rank"]), payload)
+
+
+def _sqlite_vector_search(
+    db: Session,
+    payload: KnowledgeSearchRequest,
+    query_vector: list[float],
+) -> list[dict[str, Any]]:
     rows = db.execute(
         text(
             """

@@ -21,7 +21,9 @@ import {
   fetchAgentTools,
   fetchAgents,
   fetchHealth,
+  fetchKnowledgeFaissStatus,
   fetchKnowledgeDocuments,
+  rebuildKnowledgeFaissIndex,
   renderAgentPrompt,
   rollbackAgent,
   runAgentTool,
@@ -37,6 +39,7 @@ import {
   type AgentToolSpec,
   type HealthResponse,
   type KnowledgeDocument,
+  type KnowledgeFaissStatus,
   type KnowledgeSearchItem
 } from "./api/client";
 import { DataAnalysisPage } from "./pages/DataAnalysisPage";
@@ -528,6 +531,7 @@ function sampleVariableValue(value: string): string {
 function KnowledgeBasePage() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [matches, setMatches] = useState<KnowledgeSearchItem[]>([]);
+  const [faissStatus, setFaissStatus] = useState<KnowledgeFaissStatus | null>(null);
   const [docQuery, setDocQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("宁德时代储能业务的增长驱动是什么？");
   const [title, setTitle] = useState("宁德时代储能业务笔记");
@@ -535,14 +539,20 @@ function KnowledgeBasePage() {
   const [tags, setTags] = useState("储能,宁德时代");
   const [content, setContent] = useState("宁德时代储能系统出货增长。海外大客户订单是主要驱动。\n\n毛利率改善来自原材料成本下降与产品结构优化。");
   const [message, setMessage] = useState("");
+  const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
 
   async function loadDocuments(query = docQuery) {
     const result = await fetchKnowledgeDocuments(query, 80);
     setDocuments(result.items);
   }
 
+  async function loadFaissStatus() {
+    const result = await fetchKnowledgeFaissStatus();
+    setFaissStatus(result);
+  }
+
   useEffect(() => {
-    loadDocuments("").catch((err: unknown) => {
+    Promise.all([loadDocuments(""), loadFaissStatus()]).catch((err: unknown) => {
       setMessage(err instanceof Error ? err.message : "知识库加载失败");
     });
   }, []);
@@ -559,8 +569,22 @@ function KnowledgeBasePage() {
       });
       setMessage(`已入库：${created.title}，${created.chunk_count} 个 chunks`);
       await loadDocuments("");
+      await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档入库失败");
+    }
+  }
+
+  async function rebuildFaissIndex() {
+    setRebuildingFaiss(true);
+    try {
+      const result = await rebuildKnowledgeFaissIndex();
+      setFaissStatus(result);
+      setMessage(result.message || "FAISS 索引已重建");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "FAISS 索引重建失败");
+    } finally {
+      setRebuildingFaiss(false);
     }
   }
 
@@ -626,20 +650,48 @@ function KnowledgeBasePage() {
         </Panel>
       </div>
 
-      <Panel title="检索测试">
-        <textarea className="textarea" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-        <button className="btn btn-primary full" onClick={runKnowledgeSearch} type="button">运行检索</button>
-        <div className="match-list">
-          {matches.map((item) => (
-            <div className="match" key={item.citation}>
-              <StatusBadge tone="green">score {item.score.toFixed(2)}</StatusBadge>
-              <p>{item.snippet}</p>
-              <small className="mono">{item.citation} · {item.title}</small>
+      <div className="side-column">
+        <Panel
+          title="向量索引维护"
+          description="FAISS 是可选加速层；不可用时会自动回退到 SQLite 向量扫描和 FTS。"
+          actions={<button className="btn btn-secondary" onClick={loadFaissStatus} type="button">刷新</button>}
+        >
+          <div className="metrics-grid">
+            <div className="metric">
+              <span>运行状态</span>
+              <strong>{faissStatus?.enabled ? "已启用" : "未启用"}</strong>
+              <small>{faissStatus?.available ? "runtime available" : "optional fallback"}</small>
             </div>
-          ))}
-          {matches.length === 0 ? <div className="empty-hint">检索结果会显示 citation，可被 Agent 引用</div> : null}
-        </div>
-      </Panel>
+            <div className="metric">
+              <span>索引状态</span>
+              <strong>{faissStatus?.indexed ? "已构建" : "未构建"}</strong>
+              <small>{faissStatus?.vector_count ?? 0} vectors · {faissStatus?.dimension ?? 0} dims</small>
+            </div>
+          </div>
+          <div className="form-stack">
+            <label>Embedding 模型<input className="input mono" value={faissStatus?.model ?? ""} readOnly /></label>
+            <button className="btn btn-primary full" disabled={rebuildingFaiss} onClick={rebuildFaissIndex} type="button">
+              {rebuildingFaiss ? "重建中..." : "重建 FAISS 索引"}
+            </button>
+            <div className="empty-hint">{faissStatus?.message ?? "加载索引状态中"}</div>
+          </div>
+        </Panel>
+
+        <Panel title="检索测试">
+          <textarea className="textarea" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+          <button className="btn btn-primary full" onClick={runKnowledgeSearch} type="button">运行检索</button>
+          <div className="match-list">
+            {matches.map((item) => (
+              <div className="match" key={item.citation}>
+                <StatusBadge tone="green">score {item.score.toFixed(2)}</StatusBadge>
+                <p>{item.snippet}</p>
+                <small className="mono">{item.citation} · {item.title}</small>
+              </div>
+            ))}
+            {matches.length === 0 ? <div className="empty-hint">检索结果会显示 citation，可被 Agent 引用</div> : null}
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

@@ -89,3 +89,15 @@ class KnowledgeSearchItem(BaseModel):
 class KnowledgeSearchResponse(BaseModel):
     query: str
     items: list[KnowledgeSearchItem]
+
+
+class KnowledgeFaissStatus(BaseModel):
+    enabled: bool
+    available: bool
+    indexed: bool
+    model: str
+    dimension: int = 0
+    vector_count: int = 0
+    index_path: str = ""
+    mapping_path: str = ""
+    message: str = ""
