@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>系统设置 - A股交易智能体</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#2d3133",
+                        "surface": "#f7f9fb",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#ffdad7",
+                        "tertiary-container": "#410004",
+                        "on-tertiary-fixed-variant": "#930013",
+                        "inverse-on-surface": "#eff1f3",
+                        "on-tertiary-fixed": "#410004",
+                        "surface-container-low": "#f2f4f6",
+                        "primary-fixed": "#dae2fd",
+                        "error": "#ba1a1a",
+                        "surface-container": "#eceef0",
+                        "on-surface-variant": "#45464d",
+                        "outline-variant": "#c6c6cd",
+                        "on-primary": "#ffffff",
+                        "surface-container-highest": "#e0e3e5",
+                        "secondary-fixed": "#6ffbbe",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline": "#76777d",
+                        "tertiary-fixed-dim": "#ffb3ad",
+                        "on-primary-fixed": "#131b2e",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#e6e8ea",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "inverse-primary": "#bec6e0",
+                        "secondary": "#006c49",
+                        "surface-tint": "#565e74",
+                        "on-error-container": "#93000a",
+                        "on-background": "#191c1e",
+                        "on-tertiary-container": "#ef4444",
+                        "on-secondary-fixed": "#002113",
+                        "primary": "#000000",
+                        "on-surface": "#191c1e",
+                        "tertiary": "#000000",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-dim": "#d8dadc",
+                        "on-tertiary": "#ffffff",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-primary-container": "#7c839b",
+                        "primary-container": "#131b2e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "secondary-container": "#6cf8bb",
+                        "on-secondary-container": "#00714d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "sidebar-width-expanded": "240px",
+                        "unit": "4px",
+                        "container-padding": "16px",
+                        "grid-gutter": "12px",
+                        "sidebar-width-collapsed": "64px",
+                        "header-height": "56px"
+                    },
+                    "fontFamily": {
+                        "display-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "data-mono": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "display-sm": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-caps": ["11px", { "lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-sm": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "data-mono": ["12px", { "lineHeight": "16px", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #F8FAFC; }
+        .card-border { border: 1px solid #E2E8F0; }
+        .input-border:focus { border-color: #0F172A; outline: none; }
+        input[type="text"], select {
+            height: 32px;
+            padding: 0 8px;
+            font-size: 14px;
+            border: 1px solid #E2E8F0;
+            border-radius: 2px;
+            width: 100%;
+        }
+        .btn-primary {
+            height: 32px;
+            background-color: #0F172A;
+            color: white;
+            padding: 0 16px;
+            border-radius: 2px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .btn-secondary {
+            height: 32px;
+            border: 1px solid #E2E8F0;
+            background-color: white;
+            color: #0F172A;
+            padding: 0 16px;
+            border-radius: 2px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body class="text-on-surface font-body-md antialiased">
+<!-- Top Navigation Bar -->
+<header class="fixed top-0 right-0 left-sidebar-width-expanded h-header-height flex justify-between items-center px-container-padding z-40 bg-surface-container-lowest border-b border-outline-variant">
+<div class="flex items-center gap-4">
+<h1 class="font-display-sm text-display-sm font-bold text-primary">系统设置</h1>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined cursor-pointer hover:text-primary text-on-surface-variant transition-all">monitor_heart</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary text-on-surface-variant transition-all">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary text-on-surface-variant transition-all">account_circle</span>
+</div>
+</header>
+<!-- Side Navigation Bar -->
+<nav class="fixed left-0 top-0 h-full flex flex-col z-50 bg-surface-container-lowest docked full-height left-0 w-sidebar-width-expanded border-r border-outline-variant">
+<div class="p-container-padding border-b border-outline-variant">
+<h2 class="font-display-sm text-display-sm font-bold text-primary">A股交易智能体</h2>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Institutional Grade</p>
+</div>
+<ul class="flex-1 py-4 flex flex-col gap-2">
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">database</span>
+<span>数据源</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span>数据分析</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span>聊天分析</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">smart_toy</span>
+<span>智能体管理</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">inventory_2</span>
+<span>知识库</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span>任务报告</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 font-body-md text-body-md text-primary border-r-2 border-primary bg-surface-container transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span>系统设置</span>
+</a>
+</li>
+</ul>
+</nav>
+<!-- Main Content -->
+<main class="ml-[240px] mt-[56px] p-[16px] max-w-7xl mx-auto grid grid-cols-12 gap-[12px]">
+<!-- General Settings -->
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest card-border rounded">
+<div class="p-4 border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">tune</span> 常规设置
+                </h3>
+</div>
+<div class="p-4 space-y-4">
+<div>
+<label class="block text-body-sm font-semibold mb-1">应用名称</label>
+<input class="input-border" type="text" value="A股交易智能体 (Institutional)"/>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">运行环境</label>
+<select class="input-border">
+<option selected="">Production (Prod)</option>
+<option>Staging (UAT)</option>
+<option>Development (Dev)</option>
+</select>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<div>
+<label class="block text-body-sm font-semibold mb-1">系统语言</label>
+<select class="input-border">
+<option selected="">简体中文 (zh-CN)</option>
+<option>English (en-US)</option>
+</select>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">时区</label>
+<select class="input-border">
+<option selected="">Asia/Shanghai (UTC+8)</option>
+</select>
+</div>
+</div>
+</div>
+</div>
+<!-- Model Configuration -->
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest card-border rounded">
+<div class="p-4 border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">psychology</span> 模型配置
+                </h3>
+</div>
+<div class="p-4 space-y-4">
+<div class="grid grid-cols-2 gap-4">
+<div>
+<label class="block text-body-sm font-semibold mb-1">默认快速模型 (Fast)</label>
+<select class="input-border">
+<option selected="">GPT-3.5-Turbo</option>
+<option>Claude-3-Haiku</option>
+</select>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">默认深度模型 (Deep)</label>
+<select class="input-border">
+<option selected="">GPT-4o</option>
+<option>Claude-3.5-Sonnet</option>
+</select>
+</div>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">API 基础 URL (Base URL)</label>
+<input class="input-border font-data-mono" type="text" value="https://api.openai.com/v1"/>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">API Key 状态</label>
+<div class="flex items-center gap-2">
+<input class="bg-surface-container-low text-on-surface-variant cursor-not-allowed font-data-mono" disabled="" type="text" value="sk-***************************"/>
+<button class="btn-secondary whitespace-nowrap">更新 Key</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Data Configuration -->
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest card-border rounded">
+<div class="p-4 border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">storage</span> 数据配置
+                </h3>
+</div>
+<div class="p-4 space-y-4">
+<div>
+<label class="block text-body-sm font-semibold mb-1">目标市场 (Market)</label>
+<div class="flex gap-4">
+<label class="flex items-center gap-2"><input checked="" class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> 沪深 A 股</label>
+<label class="flex items-center gap-2"><input checked="" class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> 科创板</label>
+<label class="flex items-center gap-2"><input class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> 港股通</label>
+</div>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">缓存策略 (Cache Policy)</label>
+<select class="input-border">
+<option selected="">Redis 集群 (高可用)</option>
+<option>本地内存 (单机)</option>
+</select>
+</div>
+<div>
+<label class="block text-body-sm font-semibold mb-1">自动健康检查频率</label>
+<select class="input-border">
+<option>每分钟</option>
+<option selected="">每 5 分钟</option>
+<option>每小时</option>
+</select>
+</div>
+</div>
+</div>
+<!-- Security & Maintenance -->
+<div class="col-span-12 lg:col-span-6 bg-surface-container-lowest card-border rounded">
+<div class="p-4 border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">security</span> 安全与维护
+                </h3>
+</div>
+<div class="p-4 space-y-6">
+<div class="flex items-center justify-between">
+<div>
+<div class="font-semibold text-body-md">数据库加密状态</div>
+<div class="text-body-sm text-on-surface-variant">敏感数据列已启用 AES-256 加密。</div>
+</div>
+<span class="px-2 py-1 bg-secondary-container text-on-secondary-container font-label-caps rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">lock</span> 已加密
+                    </span>
+</div>
+<div class="border-t border-outline-variant pt-4 flex gap-4">
+<button class="btn-secondary flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">delete</span> 清理系统缓存
+                    </button>
+<button class="btn-secondary flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">download</span> 导出运行日志
+                    </button>
+</div>
+</div>
+</div>
+<!-- Save Action -->
+<div class="col-span-12 flex justify-end gap-4 mt-4">
+<button class="btn-secondary">取消更改</button>
+<button class="btn-primary">保存设置</button>
+</div>
+</main>
+</body></html>

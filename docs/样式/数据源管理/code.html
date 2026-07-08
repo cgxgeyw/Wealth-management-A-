@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+
+<html lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>数据源管理 - A股交易智能体</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#2d3133",
+                        "surface": "#f7f9fb",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#ffdad7",
+                        "tertiary-container": "#410004",
+                        "on-tertiary-fixed-variant": "#930013",
+                        "inverse-on-surface": "#eff1f3",
+                        "on-tertiary-fixed": "#410004",
+                        "surface-container-low": "#f2f4f6",
+                        "primary-fixed": "#dae2fd",
+                        "error": "#ba1a1a",
+                        "surface-container": "#eceef0",
+                        "on-surface-variant": "#45464d",
+                        "outline-variant": "#c6c6cd",
+                        "on-primary": "#ffffff",
+                        "surface-container-highest": "#e0e3e5",
+                        "secondary-fixed": "#6ffbbe",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline": "#76777d",
+                        "tertiary-fixed-dim": "#ffb3ad",
+                        "on-primary-fixed": "#131b2e",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#e6e8ea",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "inverse-primary": "#bec6e0",
+                        "secondary": "#006c49",
+                        "surface-tint": "#565e74",
+                        "on-error-container": "#93000a",
+                        "on-background": "#191c1e",
+                        "on-tertiary-container": "#ef4444",
+                        "on-secondary-fixed": "#002113",
+                        "primary": "#000000",
+                        "on-surface": "#191c1e",
+                        "tertiary": "#000000",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-dim": "#d8dadc",
+                        "on-tertiary": "#ffffff",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-primary-container": "#7c839b",
+                        "primary-container": "#131b2e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "secondary-container": "#6cf8bb",
+                        "on-secondary-container": "#00714d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "sidebar-width-expanded": "240px",
+                        "unit": "4px",
+                        "container-padding": "16px",
+                        "grid-gutter": "12px",
+                        "sidebar-width-collapsed": "64px",
+                        "header-height": "56px"
+                    },
+                    "fontFamily": {
+                        "display-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "data-mono": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "display-sm": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-caps": ["11px", { "lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-sm": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "data-mono": ["12px", { "lineHeight": "16px", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        .data-mono { font-family: 'JetBrains Mono', monospace; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-background text-on-background h-screen overflow-hidden flex">
+<!-- SideNavBar -->
+<nav class="bg-surface-container-lowest border-r border-outline-variant w-sidebar-width-expanded h-full flex flex-col z-50 fixed left-0 top-0 transition-colors duration-150 ease-in-out">
+<div class="h-header-height flex items-center px-container-padding border-b border-outline-variant shrink-0">
+<span class="font-display-sm text-display-sm font-bold text-primary truncate">A股交易智能体</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant ml-2 bg-surface-container px-2 py-1 rounded">Institutional Grade</span>
+</div>
+<div class="flex-1 overflow-y-auto py-unit font-body-md text-body-md">
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-primary border-r-2 border-primary bg-surface-container transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">database</span>
+                数据源
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">analytics</span>
+                数据分析
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">chat</span>
+                聊天分析
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">smart_toy</span>
+                智能体管理
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">inventory_2</span>
+                知识库
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">assignment</span>
+                任务报告
+            </a>
+<a class="flex items-center px-container-padding py-3 mx-2 my-1 rounded text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#">
+<span class="material-symbols-outlined mr-3">settings</span>
+                系统设置
+            </a>
+</div>
+<div class="p-container-padding border-t border-outline-variant shrink-0">
+<div class="flex items-center">
+<img alt="User Profile" class="w-8 h-8 rounded-full bg-surface-container object-cover" data-alt="A professional user profile avatar showing a modern, minimalist portrait in a sleek corporate setting. The lighting is soft and neutral, conveying trust and expertise. The aesthetic matches a high-end financial dashboard." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD1O7eL06G0mWGJrgaobaUfUHtJZ8gX_7IIAw2wLwg848Y4GwKQQrH0fYH5GxYxuLDDWxpC6s2Jhe47cCKe9G1TK-SJJ2PwSjdHgEKb267GDL_pX4UdAQM9PO1QLRvUx1Zmrih_ITO8WMl38cpccyJNkysIXKSkTyipbH8GtbZOuZ7CqufihbEIaD1Dce3Lg_HXt-4Itp6Ofl1MLGZ9nqM5DBIObg5njml55KNubAOnZ1WKh58uQmBYj2M84DRsht-6rfr1jExz2PA"/>
+<div class="ml-3 font-body-sm text-body-sm">
+<p class="font-medium text-on-surface">Admin User</p>
+<p class="text-on-surface-variant">admin@system.com</p>
+</div>
+</div>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col ml-[240px]">
+<!-- TopNavBar -->
+<header class="bg-surface-container-lowest border-b border-outline-variant h-header-height flex justify-between items-center px-container-padding z-40 fixed top-0 right-0 left-sidebar-width-expanded">
+<div class="font-headline-sm text-headline-sm text-primary font-bold">
+                数据源管理
+            </div>
+<div class="flex items-center space-x-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+<input class="h-8 pl-8 pr-3 text-sm bg-surface-container-low border border-outline-variant rounded focus:outline-none focus:border-primary focus:ring-0 w-48 font-body-sm text-body-sm text-on-surface" placeholder="搜索..." type="text"/>
+</div>
+<button class="text-on-surface-variant hover:text-primary transition-all cursor-pointer">
+<span class="material-symbols-outlined">monitor_heart</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-all cursor-pointer">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-all cursor-pointer">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Canvas -->
+<main class="flex-1 overflow-y-auto mt-header-height p-container-padding bg-background">
+<div class="max-w-[1600px] mx-auto space-y-grid-gutter">
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-grid-gutter">
+<div class="bg-surface-container-lowest border border-outline-variant p-4 rounded-DEFAULT flex items-center justify-between">
+<div>
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase">Healthy Sources</p>
+<p class="font-display-sm text-display-sm mt-1">12</p>
+</div>
+<div class="w-10 h-10 rounded-full bg-secondary-container bg-opacity-20 flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-weight="fill">check_circle</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-4 rounded-DEFAULT flex items-center justify-between">
+<div>
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase">Abnormal</p>
+<p class="font-display-sm text-display-sm text-error mt-1">1</p>
+</div>
+<div class="w-10 h-10 rounded-full bg-error-container bg-opacity-20 flex items-center justify-center text-error">
+<span class="material-symbols-outlined" data-weight="fill">warning</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-4 rounded-DEFAULT flex items-center justify-between">
+<div>
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase">Recent Failures</p>
+<p class="font-display-sm text-display-sm mt-1">2</p>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined" data-weight="fill">error</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-4 rounded-DEFAULT flex items-center justify-between">
+<div>
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase">Cache Hit Rate</p>
+<p class="font-display-sm text-display-sm mt-1">85.4%</p>
+</div>
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined" data-weight="fill">memory</span>
+</div>
+</div>
+</div>
+<!-- Main Content Grid -->
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-grid-gutter">
+<!-- Left Column: Data Sources Table -->
+<div class="xl:col-span-2 space-y-grid-gutter">
+<div class="bg-surface-container-lowest border border-outline-variant rounded-DEFAULT overflow-hidden">
+<div class="p-3 border-b border-outline-variant flex justify-between items-center bg-surface-bright">
+<h2 class="font-headline-sm text-headline-sm">Data Sources</h2>
+<button class="bg-primary text-on-primary font-body-sm text-body-sm px-3 py-1.5 rounded flex items-center h-[28px] hover:bg-surface-tint transition-colors">
+<span class="material-symbols-outlined text-[16px] mr-1">add</span>
+                                    Add Source
+                                </button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse font-body-sm text-body-sm">
+<thead>
+<tr class="border-b border-outline-variant bg-surface-container-low">
+<th class="p-3 font-medium text-on-surface-variant">Name</th>
+<th class="p-3 font-medium text-on-surface-variant">Type</th>
+<th class="p-3 font-medium text-on-surface-variant">Health</th>
+<th class="p-3 font-medium text-on-surface-variant">Auth</th>
+<th class="p-3 font-medium text-on-surface-variant">TTL</th>
+<th class="p-3 font-medium text-on-surface-variant">Last Success</th>
+<th class="p-3 font-medium text-on-surface-variant text-right">Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="p-3">
+<div class="font-medium text-on-surface">EastMoney</div>
+<div class="font-data-mono text-data-mono text-on-surface-variant text-[10px]">eastmoney_push2his</div>
+</td>
+<td class="p-3"><span class="bg-primary-fixed text-primary-container px-2 py-0.5 rounded font-label-caps text-label-caps">REST</span></td>
+<td class="p-3"><div class="w-2 h-2 rounded-full bg-secondary"></div></td>
+<td class="p-3 font-data-mono text-data-mono text-on-surface-variant">API_KEY</td>
+<td class="p-3 font-data-mono text-data-mono">60s</td>
+<td class="p-3 font-data-mono text-data-mono">2023-10-27 10:14:22</td>
+<td class="p-3 text-right">
+<button class="text-primary hover:text-surface-tint p-1"><span class="material-symbols-outlined text-[18px]">play_arrow</span></button>
+<button class="text-on-surface-variant hover:text-primary p-1 ml-1"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+</td>
+</tr>
+<tr class="border-b border-outline-variant bg-surface-bright hover:bg-surface-container-low transition-colors">
+<td class="p-3">
+<div class="font-medium text-on-surface">MooTDX</div>
+<div class="font-data-mono text-data-mono text-on-surface-variant text-[10px]">mootdx_quote</div>
+</td>
+<td class="p-3"><span class="bg-surface-container-highest text-on-surface px-2 py-0.5 rounded font-label-caps text-label-caps">TCP</span></td>
+<td class="p-3"><div class="w-2 h-2 rounded-full bg-secondary"></div></td>
+<td class="p-3 font-data-mono text-data-mono text-on-surface-variant">NONE</td>
+<td class="p-3 font-data-mono text-data-mono">10s</td>
+<td class="p-3 font-data-mono text-data-mono">2023-10-27 10:14:30</td>
+<td class="p-3 text-right">
+<button class="text-primary hover:text-surface-tint p-1"><span class="material-symbols-outlined text-[18px]">play_arrow</span></button>
+<button class="text-on-surface-variant hover:text-primary p-1 ml-1"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="p-3">
+<div class="font-medium text-on-surface">Sina Finance</div>
+<div class="font-data-mono text-data-mono text-on-surface-variant text-[10px]">sina_kline</div>
+</td>
+<td class="p-3"><span class="bg-primary-fixed text-primary-container px-2 py-0.5 rounded font-label-caps text-label-caps">REST</span></td>
+<td class="p-3"><div class="w-2 h-2 rounded-full bg-error"></div></td>
+<td class="p-3 font-data-mono text-data-mono text-on-surface-variant">OAUTH2</td>
+<td class="p-3 font-data-mono text-data-mono">300s</td>
+<td class="p-3 font-data-mono text-data-mono text-error">2023-10-27 10:05:11</td>
+<td class="p-3 text-right">
+<button class="text-primary hover:text-surface-tint p-1"><span class="material-symbols-outlined text-[18px]">play_arrow</span></button>
+<button class="text-on-surface-variant hover:text-primary p-1 ml-1"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Logs Table -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-DEFAULT overflow-hidden">
+<div class="p-3 border-b border-outline-variant flex justify-between items-center bg-surface-bright">
+<h2 class="font-headline-sm text-headline-sm">System Logs</h2>
+<div class="flex space-x-2">
+<span class="bg-error-container text-on-error-container px-2 py-1 rounded font-label-caps text-label-caps flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-error mr-1.5"></span>Errors Only</span>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse font-body-sm text-body-sm font-data-mono text-data-mono">
+<thead class="bg-surface-container-low border-b border-outline-variant text-on-surface-variant">
+<tr>
+<th class="p-2 font-medium">Timestamp</th>
+<th class="p-2 font-medium">Source</th>
+<th class="p-2 font-medium">Status</th>
+<th class="p-2 font-medium">Latency</th>
+<th class="p-2 font-medium">Message</th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low text-on-surface">
+<td class="p-2">10:14:32.441</td>
+<td class="p-2 text-on-surface-variant">eastmoney_push2his</td>
+<td class="p-2"><span class="text-secondary font-bold">200 OK</span></td>
+<td class="p-2">42ms</td>
+<td class="p-2 truncate max-w-[200px]">Fetched 500 rows for 600519.SH</td>
+</tr>
+<tr class="border-b border-outline-variant bg-surface-bright hover:bg-surface-container-low text-on-surface">
+<td class="p-2">10:14:31.002</td>
+<td class="p-2 text-on-surface-variant">sina_kline</td>
+<td class="p-2"><span class="text-error font-bold">500 ERR</span></td>
+<td class="p-2">1204ms</td>
+<td class="p-2 text-error truncate max-w-[200px]">Connection reset by peer</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low text-on-surface">
+<td class="p-2">10:14:30.115</td>
+<td class="p-2 text-on-surface-variant">mootdx_quote</td>
+<td class="p-2"><span class="text-secondary font-bold">200 OK</span></td>
+<td class="p-2">15ms</td>
+<td class="p-2 truncate max-w-[200px]">Heartbeat ack received</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- Right Column: Visualization & Forms -->
+<div class="space-y-grid-gutter">
+<!-- Routing Visualization -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-DEFAULT p-4">
+<h2 class="font-headline-sm text-headline-sm border-b border-outline-variant pb-2 mb-4">Data Routing Pipeline</h2>
+<div class="flex flex-col items-center space-y-2 py-4">
+<div class="border border-outline-variant rounded bg-surface-container-low px-4 py-2 font-data-mono text-data-mono text-sm w-full text-center">daily_kline (Input)</div>
+<span class="material-symbols-outlined text-outline-variant">arrow_downward</span>
+<div class="border border-outline-variant rounded bg-surface-container-highest px-4 py-2 font-data-mono text-data-mono text-sm w-full text-center">eastmoney_push2his</div>
+<span class="material-symbols-outlined text-outline-variant">arrow_downward</span>
+<div class="border border-outline-variant rounded bg-surface-container-highest px-4 py-2 font-data-mono text-data-mono text-sm w-full text-center">mootdx</div>
+<span class="material-symbols-outlined text-outline-variant">arrow_downward</span>
+<div class="border border-primary rounded bg-primary-fixed px-4 py-2 font-data-mono text-data-mono text-sm w-full text-center font-bold text-primary-container">sina_kline (Output)</div>
+</div>
+</div>
+<!-- Side Drawer UI (Embedded as Card) -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-DEFAULT">
+<div class="p-3 border-b border-outline-variant flex justify-between items-center bg-surface-bright">
+<h2 class="font-headline-sm text-headline-sm">Edit Source</h2>
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined text-[18px]">close</span></button>
+</div>
+<div class="p-4 space-y-4">
+<div>
+<label class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Base URL</label>
+<input class="w-full h-8 px-2 bg-surface border border-outline-variant rounded font-data-mono text-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" type="text" value="https://api.eastmoney.com/v1"/>
+</div>
+<div>
+<label class="block font-label-caps text-label-caps text-on-surface-variant mb-1">API Key</label>
+<input class="w-full h-8 px-2 bg-surface border border-outline-variant rounded font-data-mono text-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" type="password" value="**************"/>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div>
+<label class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Timeout (ms)</label>
+<input class="w-full h-8 px-2 bg-surface border border-outline-variant rounded font-data-mono text-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" type="number" value="5000"/>
+</div>
+<div>
+<label class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Rate Limit (/s)</label>
+<input class="w-full h-8 px-2 bg-surface border border-outline-variant rounded font-data-mono text-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" type="number" value="10"/>
+</div>
+</div>
+<div>
+<label class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Proxy</label>
+<input class="w-full h-8 px-2 bg-surface border border-outline-variant rounded font-data-mono text-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" placeholder="http://proxy:port" type="text"/>
+</div>
+<div class="pt-2 flex justify-end space-x-2">
+<button class="px-3 py-1.5 border border-outline-variant rounded font-body-sm text-body-sm text-on-surface hover:bg-surface-container-low transition-colors h-[28px]">Cancel</button>
+<button class="px-3 py-1.5 bg-primary text-on-primary rounded font-body-sm text-body-sm hover:bg-surface-tint transition-colors h-[28px]">Save Changes</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

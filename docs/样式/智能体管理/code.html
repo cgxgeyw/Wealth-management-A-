@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Agent 管理 - A股交易智能体</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#2d3133",
+                        "surface": "#f7f9fb",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#ffdad7",
+                        "tertiary-container": "#410004",
+                        "on-tertiary-fixed-variant": "#930013",
+                        "inverse-on-surface": "#eff1f3",
+                        "on-tertiary-fixed": "#410004",
+                        "surface-container-low": "#f2f4f6",
+                        "primary-fixed": "#dae2fd",
+                        "error": "#ba1a1a",
+                        "surface-container": "#eceef0",
+                        "on-surface-variant": "#45464d",
+                        "outline-variant": "#c6c6cd",
+                        "on-primary": "#ffffff",
+                        "surface-container-highest": "#e0e3e5",
+                        "secondary-fixed": "#6ffbbe",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline": "#76777d",
+                        "tertiary-fixed-dim": "#ffb3ad",
+                        "on-primary-fixed": "#131b2e",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#e6e8ea",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "inverse-primary": "#bec6e0",
+                        "secondary": "#006c49",
+                        "surface-tint": "#565e74",
+                        "on-error-container": "#93000a",
+                        "on-background": "#191c1e",
+                        "on-tertiary-container": "#ef4444",
+                        "on-secondary-fixed": "#002113",
+                        "primary": "#000000",
+                        "on-surface": "#191c1e",
+                        "tertiary": "#000000",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-dim": "#d8dadc",
+                        "on-tertiary": "#ffffff",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-primary-container": "#7c839b",
+                        "primary-container": "#131b2e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "secondary-container": "#6cf8bb",
+                        "on-secondary-container": "#00714d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "sidebar-width-expanded": "240px",
+                        "unit": "4px",
+                        "container-padding": "16px",
+                        "grid-gutter": "12px",
+                        "sidebar-width-collapsed": "64px",
+                        "header-height": "56px"
+                    },
+                    "fontFamily": {
+                        "display-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "data-mono": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "display-sm": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-caps": ["11px", { "lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "headline-sm": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "data-mono": ["12px", { "lineHeight": "16px", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Custom scrollbar for a cleaner terminal look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #c6c6cd; /* outline-variant */
+            border-radius: 4px;
+        }
+        .code-line {
+            display: flex;
+        }
+        .code-line::before {
+            content: attr(data-line);
+            width: 24px;
+            margin-right: 12px;
+            color: #76777d; /* outline */
+            text-align: right;
+            user-select: none;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-md antialiased overflow-hidden selection:bg-primary selection:text-on-primary">
+<!-- SideNavBar -->
+<nav class="fixed left-0 top-0 h-full flex flex-col z-50 docked full-height left-0 w-sidebar-width-expanded border-r border-outline-variant bg-surface-container-lowest">
+<div class="h-header-height flex items-center px-container-padding border-b border-outline-variant">
+<span class="font-display-sm text-display-sm font-bold text-primary">A股交易智能体</span>
+</div>
+<div class="px-container-padding py-4">
+<span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Institutional Grade</span>
+</div>
+<ul class="flex flex-col gap-1 px-2 mt-2 flex-1">
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">database</span> 数据源</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">analytics</span> 数据分析</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">chat</span> 聊天分析</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-primary border-r-2 border-primary bg-surface-container transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">smart_toy</span> 智能体管理</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">inventory_2</span> 知识库</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">assignment</span> 任务报告</a></li>
+<li><a class="flex items-center gap-3 px-3 py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-low transition-colors duration-150 ease-in-out" href="#"><span class="material-symbols-outlined text-[20px]">settings</span> 系统设置</a></li>
+</ul>
+<div class="p-4 border-t border-outline-variant flex items-center gap-3 cursor-pointer hover:bg-surface-container-low transition-colors duration-150 ease-in-out">
+<span class="material-symbols-outlined text-outline">account_circle</span>
+<span class="font-body-md text-body-md text-on-surface">Admin User</span>
+</div>
+</nav>
+<!-- TopNavBar -->
+<header class="fixed top-0 right-0 left-sidebar-width-expanded h-header-height flex justify-between items-center px-container-padding z-40 border-b border-outline-variant bg-surface-container-lowest">
+<div class="flex-1 flex items-center">
+<span class="font-headline-sm text-headline-sm text-primary font-bold">智能体管理</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative w-64">
+<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-outline text-[18px]">search</span>
+<input class="w-full h-8 pl-8 pr-3 bg-surface-container-low border-none rounded font-body-sm text-body-sm focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest transition-all" placeholder="Search agents..." type="text"/>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-low text-on-surface-variant hover:text-primary transition-all"><span class="material-symbols-outlined text-[20px]">monitor_heart</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-low text-on-surface-variant hover:text-primary transition-all"><span class="material-symbols-outlined text-[20px]">notifications</span></button>
+</div>
+</div>
+</header>
+<!-- Main Workspace -->
+<main class="ml-sidebar-width-expanded pt-header-height h-screen flex bg-background">
+<!-- Left Panel: Agent List -->
+<aside class="w-72 flex-shrink-0 flex flex-col border-r border-outline-variant bg-surface-container-lowest">
+<div class="p-container-padding border-b border-outline-variant flex justify-between items-center">
+<h2 class="font-headline-sm text-headline-sm text-primary">Agents</h2>
+<button class="h-8 w-8 flex items-center justify-center rounded bg-primary text-on-primary hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
+<!-- Agent Item -->
+<div class="p-3 rounded border border-transparent hover:border-outline-variant hover:bg-surface-container-low cursor-pointer flex items-center justify-between group transition-all">
+<div>
+<div class="font-body-md text-body-md text-on-surface font-semibold">Data Steward</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">Data Aggregation</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+<!-- Active Agent Item -->
+<div class="p-3 rounded border border-outline-variant bg-surface-container-highest cursor-pointer flex items-center justify-between relative overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>
+<div class="pl-2">
+<div class="font-body-md text-body-md text-primary font-bold">Technical Analyst</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">Pattern Recognition</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+<!-- Agent Item -->
+<div class="p-3 rounded border border-transparent hover:border-outline-variant hover:bg-surface-container-low cursor-pointer flex items-center justify-between group transition-all">
+<div>
+<div class="font-body-md text-body-md text-on-surface font-semibold">News Analyst</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">Sentiment Analysis</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+<!-- Agent Item -->
+<div class="p-3 rounded border border-transparent hover:border-outline-variant hover:bg-surface-container-low cursor-pointer flex items-center justify-between group transition-all">
+<div>
+<div class="font-body-md text-body-md text-on-surface font-semibold">Bull Researcher</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">Long Strategies</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-outline-variant"></span>
+</div>
+<!-- Agent Item -->
+<div class="p-3 rounded border border-transparent hover:border-outline-variant hover:bg-surface-container-low cursor-pointer flex items-center justify-between group transition-all">
+<div>
+<div class="font-body-md text-body-md text-on-surface font-semibold">Risk Manager</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">Exposure Control</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+</div>
+</aside>
+<!-- Right Panel: Configuration Editor -->
+<section class="flex-1 flex flex-col min-w-0 bg-surface">
+<!-- Detail Header -->
+<div class="h-16 flex-shrink-0 px-container-padding border-b border-outline-variant bg-surface-container-lowest flex items-center justify-between">
+<div class="flex items-center gap-6">
+<h1 class="font-headline-sm text-headline-sm text-primary font-bold flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">smart_toy</span>
+                        Technical Analyst
+                    </h1>
+<div class="h-6 w-px bg-outline-variant"></div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Model</span>
+<select class="h-8 pl-3 pr-8 py-0 rounded border border-outline-variant bg-surface text-on-surface font-body-sm text-body-sm focus:border-primary focus:ring-0">
+<option>GPT-4o</option>
+<option>Claude 3.5 Sonnet</option>
+<option>DeepSeek-Coder-V2</option>
+</select>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Temp</span>
+<input class="w-16 h-8 px-2 rounded border border-outline-variant bg-surface text-on-surface font-data-mono text-data-mono focus:border-primary focus:ring-0" max="1" min="0" step="0.1" type="number" value="0.1"/>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Status</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-9 h-5 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-secondary"></div>
+</label>
+</div>
+<button class="h-8 px-4 rounded bg-primary text-on-primary font-body-sm text-body-sm hover:bg-primary/90 transition-colors flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">save</span> Save
+                    </button>
+</div>
+</div>
+<!-- Detail Body (2 Columns) -->
+<div class="flex-1 overflow-hidden flex">
+<!-- Center: Editor & Test -->
+<div class="flex-1 overflow-y-auto p-container-padding flex flex-col gap-grid-gutter">
+<!-- Prompt Editor -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded flex flex-col">
+<div class="flex border-b border-outline-variant bg-surface-container-low rounded-t">
+<button class="px-4 py-2 border-r border-outline-variant font-body-sm text-body-sm text-primary font-bold bg-surface-container-lowest border-b-2 border-b-primary -mb-[1px]">System Prompt</button>
+<button class="px-4 py-2 border-r border-outline-variant font-body-sm text-body-sm text-on-surface-variant hover:text-primary transition-colors">Task Prompt</button>
+</div>
+<div class="p-4 bg-surface-bright font-data-mono text-data-mono text-on-surface overflow-x-auto min-h-[240px]">
+<div class="code-line" data-line="1"><span class="text-[#0000FF]">You are</span> an expert quantitative technical analyst specializing in A-share markets.</div>
+<div class="code-line" data-line="2">Your objective is to analyze technical indicators and price action to identify high-probability setups.</div>
+<div class="code-line" data-line="3"></div>
+<div class="code-line" data-line="4"><span class="text-[#008000]"># Constraints</span></div>
+<div class="code-line" data-line="5">- Always refer to the provided <span class="bg-primary/10 text-primary px-1 rounded">{{kline_data}}</span> for the last 60 periods.</div>
+<div class="code-line" data-line="6">- Ignore fundamental data unless explicitly instructed via <span class="bg-primary/10 text-primary px-1 rounded">{{macro_context}}</span>.</div>
+<div class="code-line" data-line="7">- Output your analysis strictly in valid JSON format.</div>
+<div class="code-line" data-line="8"></div>
+<div class="code-line" data-line="9"><span class="text-[#008000]"># Required Output Schema</span></div>
+<div class="code-line" data-line="10">{</div>
+<div class="code-line" data-line="11">  "trend": "bullish|bearish|neutral",</div>
+<div class="code-line" data-line="12">  "support_levels": [float],</div>
+<div class="code-line" data-line="13">  "resistance_levels": [float],</div>
+<div class="code-line" data-line="14">  "confidence_score": float (0.0-1.0)</div>
+<div class="code-line" data-line="15">}</div>
+</div>
+</div>
+<!-- Test Panel -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded p-4 flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<h3 class="font-headline-sm text-headline-sm text-primary font-bold flex items-center gap-2"><span class="material-symbols-outlined text-[18px]">play_arrow</span> Test Panel</h3>
+<button class="h-7 px-3 rounded border border-outline-variant bg-surface hover:bg-surface-container-low text-on-surface font-body-sm text-body-sm transition-colors">Clear</button>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<!-- Inputs -->
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">Inject Variables (JSON)</label>
+<textarea class="w-full h-32 p-2 rounded border border-outline-variant bg-surface font-data-mono text-data-mono text-on-surface text-xs focus:border-primary focus:ring-0 resize-none">{
+  "stock_code": "600519.SH",
+  "kline_data": "[...data...]"
+}</textarea>
+<button class="h-8 w-full rounded bg-primary text-on-primary font-body-sm text-body-sm hover:bg-primary/90 transition-colors mt-1">Run Simulation</button>
+</div>
+<!-- Output -->
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">Output</label>
+<div class="w-full h-[168px] p-2 rounded border border-outline-variant bg-[#1E1E1E] text-[#D4D4D4] font-data-mono text-data-mono text-xs overflow-y-auto">
+<span class="text-[#808080]">Waiting for execution...</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Sidebar: Variables & Tools -->
+<div class="w-72 flex-shrink-0 border-l border-outline-variant bg-surface-container-lowest flex flex-col overflow-y-auto">
+<!-- Variables Section -->
+<div class="p-container-padding border-b border-outline-variant flex flex-col gap-3">
+<h3 class="font-headline-sm text-headline-sm text-primary font-bold">Variables</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Drag and drop variables into the prompt editor.</p>
+<div class="flex flex-wrap gap-2">
+<div class="px-2 py-1 bg-surface-container border border-outline-variant rounded cursor-grab flex items-center gap-1 font-data-mono text-data-mono text-xs text-on-surface hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-outline">drag_indicator</span> {{stock_code}}
+                            </div>
+<div class="px-2 py-1 bg-surface-container border border-outline-variant rounded cursor-grab flex items-center gap-1 font-data-mono text-data-mono text-xs text-on-surface hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-outline">drag_indicator</span> {{kline_data}}
+                            </div>
+<div class="px-2 py-1 bg-surface-container border border-outline-variant rounded cursor-grab flex items-center gap-1 font-data-mono text-data-mono text-xs text-on-surface hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-outline">drag_indicator</span> {{market_snapshot}}
+                            </div>
+<div class="px-2 py-1 bg-surface-container border border-outline-variant rounded cursor-grab flex items-center gap-1 font-data-mono text-data-mono text-xs text-on-surface hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-outline">drag_indicator</span> {{news_feed}}
+                            </div>
+<div class="px-2 py-1 bg-surface-container border border-outline-variant rounded cursor-grab flex items-center gap-1 font-data-mono text-data-mono text-xs text-on-surface hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-outline">drag_indicator</span> {{portfolio_state}}
+                            </div>
+</div>
+</div>
+<!-- Tools Section -->
+<div class="p-container-padding flex flex-col gap-3">
+<h3 class="font-headline-sm text-headline-sm text-primary font-bold">Tool Permissions</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Select tools this agent can invoke autonomously.</p>
+<div class="flex flex-col gap-2">
+<label class="flex items-center gap-2 cursor-pointer group">
+<input checked="" class="rounded border-outline-variant text-primary focus:ring-primary w-4 h-4" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface group-hover:text-primary transition-colors">get_kline_data</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer group">
+<input checked="" class="rounded border-outline-variant text-primary focus:ring-primary w-4 h-4" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface group-hover:text-primary transition-colors">calculate_ma</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer group">
+<input checked="" class="rounded border-outline-variant text-primary focus:ring-primary w-4 h-4" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface group-hover:text-primary transition-colors">calculate_macd</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer group">
+<input class="rounded border-outline-variant text-primary focus:ring-primary w-4 h-4" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface group-hover:text-primary transition-colors">get_financial_reports</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer group">
+<input class="rounded border-outline-variant text-primary focus:ring-primary w-4 h-4" type="checkbox"/>
+<span class="font-body-md text-body-md text-on-surface group-hover:text-primary transition-colors">execute_trade_order</span>
+</label>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+</body></html>

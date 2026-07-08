@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+
+<html lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>数据分析 - A股交易智能体</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#2d3133",
+                        "surface": "#f7f9fb",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#ffdad7",
+                        "tertiary-container": "#410004",
+                        "on-tertiary-fixed-variant": "#930013",
+                        "inverse-on-surface": "#eff1f3",
+                        "on-tertiary-fixed": "#410004",
+                        "surface-container-low": "#f2f4f6",
+                        "primary-fixed": "#dae2fd",
+                        "error": "#ba1a1a",
+                        "surface-container": "#eceef0",
+                        "on-surface-variant": "#45464d",
+                        "outline-variant": "#c6c6cd",
+                        "on-primary": "#ffffff",
+                        "surface-container-highest": "#e0e3e5",
+                        "secondary-fixed": "#6ffbbe",
+                        "primary-fixed-dim": "#bec6e0",
+                        "outline": "#76777d",
+                        "tertiary-fixed-dim": "#ffb3ad",
+                        "on-primary-fixed": "#131b2e",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#e6e8ea",
+                        "background": "#f7f9fb",
+                        "surface-variant": "#e0e3e5",
+                        "inverse-primary": "#bec6e0",
+                        "secondary": "#006c49",
+                        "surface-tint": "#565e74",
+                        "on-error-container": "#93000a",
+                        "on-background": "#191c1e",
+                        "on-tertiary-container": "#ef4444",
+                        "on-secondary-fixed": "#002113",
+                        "primary": "#000000",
+                        "on-surface": "#191c1e",
+                        "tertiary": "#000000",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-dim": "#d8dadc",
+                        "on-tertiary": "#ffffff",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "on-primary-container": "#7c839b",
+                        "primary-container": "#131b2e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "secondary-container": "#6cf8bb",
+                        "on-secondary-container": "#00714d"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    spacing: {
+                        "sidebar-width-expanded": "240px",
+                        "unit": "4px",
+                        "container-padding": "16px",
+                        "grid-gutter": "12px",
+                        "sidebar-width-collapsed": "64px",
+                        "header-height": "56px"
+                    },
+                    fontFamily: {
+                        "display-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "data-mono": ["JetBrains Mono"]
+                    },
+                    fontSize: {
+                        "display-sm": ["24px", { lineHeight: "32px", fontWeight: "600" }],
+                        "label-caps": ["11px", { lineHeight: "12px", letterSpacing: "0.05em", fontWeight: "600" }],
+                        "body-md": ["14px", { lineHeight: "20px", fontWeight: "400" }],
+                        "body-sm": ["12px", { lineHeight: "16px", fontWeight: "400" }],
+                        "headline-sm": ["18px", { lineHeight: "24px", fontWeight: "600" }],
+                        "data-mono": ["12px", { lineHeight: "16px", fontWeight: "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md m-0 p-0 overflow-hidden antialiased flex">
+<!-- SideNavBar -->
+<nav class="fixed left-0 top-0 h-full flex flex-col z-50 bg-surface-container-lowest dark:bg-inverse-surface docked full-height left-0 w-sidebar-width-expanded border-r border-outline-variant flat no shadows transition-all w-sidebar-width-expanded flex-shrink-0">
+<div class="p-container-padding flex flex-col gap-2">
+<h1 class="font-display-sm text-display-sm font-bold text-primary dark:text-inverse-primary truncate">A股交易智能体</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant dark:text-outline-variant truncate">Institutional Grade</p>
+</div>
+<ul class="flex flex-col flex-1 mt-4">
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">database</span>
+<span>数据源</span>
+</a>
+</li>
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-primary dark:text-secondary-fixed-dim border-r-2 border-primary dark:border-secondary-fixed-dim bg-surface-container dark:bg-primary-container transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">analytics</span>
+<span class="font-bold">数据分析</span>
+</a>
+</li>
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chat</span>
+<span>聊天分析</span>
+</a>
+</li>
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">smart_toy</span>
+<span>智能体管理</span>
+</a>
+</li>
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">inventory_2</span>
+<span>知识库</span>
+</a>
+</li>
+<li class="group">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">assignment</span>
+<span>任务报告</span>
+</a>
+</li>
+<li class="group mt-auto">
+<a class="flex items-center gap-3 px-container-padding py-3 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors duration-150 ease-in-out font-body-md text-body-md" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+<span>系统设置</span>
+</a>
+</li>
+</ul>
+<div class="p-container-padding border-t border-outline-variant flex items-center justify-center">
+<img alt="User Profile" class="w-8 h-8 rounded-full border border-outline-variant" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDi3mKw4dMCdihnTK7F8HCy_0gUw6FYhI3oX-91mXL2epS7OjK77IIdnkvAin-k0V3GU4XMT-nKoZqBbfZJ3lOgN_0tCvidy_CJaOA61z2qC4-qoq31l4lgZe4P3e16Ev-UDjz1g6cXa9aZpsaDFGyERqRgBD9cB5rP3WMoKWAUh8KWZOgcvsVL7yinjDuNd5L-927q_LxAD24Zuwj18KMYIVZ_PFc8hNH1F1cbzgMiO2X_bm6vI2XGd1OkFIdsCzGgaPn5UajsYa4"/>
+</div>
+</nav>
+<!-- TopNavBar & Main Content Wrapper -->
+<div class="flex-1 flex flex-col ml-sidebar-width-expanded min-h-screen relative overflow-hidden bg-background">
+<!-- TopNavBar -->
+<header class="fixed top-0 right-0 left-sidebar-width-expanded h-header-height flex justify-between items-center px-container-padding z-40 bg-surface-container-lowest dark:bg-inverse-surface docked full-width border-b border-outline-variant flat no shadows">
+<div class="flex-1 flex items-center h-full gap-4">
+<!-- Search Bar -->
+<div class="relative w-96 flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-outline text-[18px]">search</span>
+<input class="w-full h-8 pl-9 pr-3 bg-surface-container-low border border-outline-variant rounded focus:border-primary focus:ring-0 font-data-mono text-data-mono text-on-surface transition-all outline-none" placeholder="Search ticker or company..." type="text" value="300750 宁德时代"/>
+</div>
+</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<button class="hover:text-primary transition-colors cursor-pointer w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-low">
+<span class="material-symbols-outlined text-[20px]">monitor_heart</span>
+</button>
+<button class="hover:text-primary transition-colors cursor-pointer w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-low">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+</button>
+<button class="hover:text-primary transition-colors cursor-pointer w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-low">
+<span class="material-symbols-outlined text-[20px]">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-1 mt-header-height overflow-y-auto p-grid-gutter flex flex-col gap-grid-gutter w-full h-[calc(100vh-56px)]">
+<!-- Top Section: Header & Data Info -->
+<div class="flex gap-grid-gutter shrink-0">
+<!-- Stock Header Card -->
+<section class="flex-1 bg-surface-container-lowest border border-outline-variant rounded p-4 flex flex-col gap-3">
+<div class="flex justify-between items-end">
+<div class="flex items-baseline gap-3">
+<h2 class="font-headline-sm text-headline-sm font-bold text-on-surface m-0">宁德时代</h2>
+<span class="font-data-mono text-data-mono text-on-surface-variant">300750.SZ</span>
+</div>
+<div class="flex gap-2">
+<button class="px-3 py-1 border border-outline-variant rounded hover:bg-surface-container-low text-on-surface-variant font-label-caps text-label-caps transition-colors">ADD TO WATCHLIST</button>
+<button class="px-3 py-1 bg-primary text-on-primary rounded hover:bg-primary-container hover:text-on-primary-container border border-primary font-label-caps text-label-caps transition-colors">TRADE</button>
+</div>
+</div>
+<div class="flex items-end gap-4 border-b border-outline-variant pb-3">
+<div class="font-data-mono text-[32px] font-bold text-on-surface leading-none">210.50</div>
+<div class="flex items-center font-data-mono text-data-mono text-secondary gap-1 mb-1">
+<span class="material-symbols-outlined text-[16px] font-bold">arrow_upward</span>
+<span>+4.73</span>
+<span>(+2.30%)</span>
+</div>
+<div class="text-on-surface-variant font-body-sm text-body-sm ml-auto mb-1">Status: <span class="text-on-surface font-medium">OPEN</span></div>
+</div>
+<div class="grid grid-cols-4 gap-4 pt-1">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant">VOLUME</span>
+<span class="font-data-mono text-data-mono text-on-surface">1.25M</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant">TURNOVER</span>
+<span class="font-data-mono text-data-mono text-on-surface">2.64B</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant">MKT CAP</span>
+<span class="font-data-mono text-data-mono text-on-surface">925.3B</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant">PE (TTM) / PB</span>
+<span class="font-data-mono text-data-mono text-on-surface">24.5 / 5.2</span>
+</div>
+</div>
+</section>
+<!-- Data Source Status Sidebar -->
+<aside class="w-72 bg-surface-container-lowest border border-outline-variant rounded p-4 flex flex-col gap-3">
+<div class="font-label-caps text-label-caps text-on-surface-variant border-b border-outline-variant pb-2">DATA CONNECTION</div>
+<div class="flex items-center justify-between mt-2">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Primary Source</span>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-error"></span>
+<span class="font-data-mono text-data-mono text-error">WIND (OFFLINE)</span>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Fallback Source</span>
+<div class="flex items-center gap-1 bg-secondary-fixed/20 px-2 py-0.5 rounded">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="font-data-mono text-data-mono text-secondary">SINA (ACTIVE)</span>
+</div>
+</div>
+<div class="mt-auto pt-3 border-t border-outline-variant">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant">LAST UPDATED</span>
+<span class="font-data-mono text-data-mono text-on-surface">2023-10-27 14:32:45 CST</span>
+</div>
+</div>
+</aside>
+</div>
+<!-- Middle Section: Main Chart -->
+<section class="flex-1 bg-surface-container-lowest border border-outline-variant rounded flex flex-col min-h-[400px]">
+<!-- Chart Toolbar -->
+<div class="h-10 border-b border-outline-variant flex items-center px-4 justify-between bg-surface-bright">
+<div class="flex items-center gap-4 h-full">
+<div class="flex gap-1">
+<button class="h-6 px-2 text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps rounded hover:bg-surface-container-low transition-colors">1M</button>
+<button class="h-6 px-2 text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps rounded hover:bg-surface-container-low transition-colors">5M</button>
+<button class="h-6 px-2 bg-surface-container-high text-on-surface font-label-caps text-label-caps rounded transition-colors font-bold border border-outline-variant">DAY</button>
+<button class="h-6 px-2 text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps rounded hover:bg-surface-container-low transition-colors">WEEK</button>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex gap-1 items-center">
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant">candlestick_chart</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant ml-1">INDICATORS:</span>
+<button class="h-6 px-2 text-primary font-label-caps text-label-caps rounded bg-primary-fixed/30 border border-primary/20 transition-colors">MA(5,10,20)</button>
+<button class="h-6 px-2 text-primary font-label-caps text-label-caps rounded bg-primary-fixed/30 border border-primary/20 transition-colors">MACD</button>
+<button class="h-6 px-2 text-primary font-label-caps text-label-caps rounded bg-primary-fixed/30 border border-primary/20 transition-colors">VOL</button>
+<button class="h-6 px-2 text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps rounded hover:bg-surface-container-low transition-colors border border-dashed border-outline-variant ml-1">+ ADD</button>
+</div>
+</div>
+<div class="flex gap-2 text-on-surface-variant">
+<button class="hover:text-primary"><span class="material-symbols-outlined text-[18px]">settings</span></button>
+<button class="hover:text-primary"><span class="material-symbols-outlined text-[18px]">fullscreen</span></button>
+</div>
+</div>
+<!-- Chart Area Placeholder -->
+<div class="flex-1 relative bg-[#F8FAFC] overflow-hidden flex items-center justify-center" data-alt="A sophisticated digital interface displaying a highly detailed, professional candlestick financial chart on a light mode screen. The chart uses precise geometry and strict grid lines, featuring crisp green and red candlesticks on a pure white background. Minimalist technical indicators like moving averages are overlaid in thin blue and orange lines. The aesthetic is extremely clean, data-dense, and institutional, characteristic of a Bloomberg or TradingView professional terminal. Soft, even lighting creates a flat, technical mood without shadows.">
+<div class="absolute inset-0 opacity-10 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9IiMwMDAiLz48L3N2Zz4=')]"></div>
+<!-- Simulated Chart Content -->
+<div class="w-full h-full p-4 flex flex-col relative z-10">
+<!-- Price Scale -->
+<div class="absolute right-0 top-0 bottom-12 w-16 border-l border-outline-variant flex flex-col justify-between py-4 text-right pr-2 font-data-mono text-[10px] text-on-surface-variant">
+<span>215.00</span><span>210.00</span><span>205.00</span><span>200.00</span><span>195.00</span>
+</div>
+<!-- Time Scale -->
+<div class="absolute bottom-0 left-0 right-16 h-8 border-t border-outline-variant flex justify-between px-8 items-center font-data-mono text-[10px] text-on-surface-variant">
+<span>10/01</span><span>10/08</span><span>10/15</span><span>10/22</span><span>Today</span>
+</div>
+<!-- Candlestick Mockup -->
+<div class="absolute inset-12 right-20 bottom-12 border-b border-r border-outline-variant/30 flex items-end gap-1 px-4">
+<!-- Example Bars -->
+<div class="w-3 h-24 bg-error-container border border-error mb-10 relative"><div class="absolute left-1/2 w-px h-32 bg-error -translate-x-1/2 -top-4"></div></div>
+<div class="w-3 h-16 bg-error-container border border-error mb-20 relative"><div class="absolute left-1/2 w-px h-24 bg-error -translate-x-1/2 -bottom-2"></div></div>
+<div class="w-3 h-32 bg-secondary-container border border-secondary mb-12 relative"><div class="absolute left-1/2 w-px h-40 bg-secondary -translate-x-1/2 -top-6"></div></div>
+<div class="w-3 h-12 bg-secondary-container border border-secondary mb-40 relative"><div class="absolute left-1/2 w-px h-20 bg-secondary -translate-x-1/2 -top-2"></div></div>
+<div class="w-3 h-20 bg-secondary-container border border-secondary mb-48 relative"><div class="absolute left-1/2 w-px h-24 bg-secondary -translate-x-1/2 -top-2"></div></div>
+<div class="w-3 h-24 bg-error-container border border-error mb-44 relative"><div class="absolute left-1/2 w-px h-32 bg-error -translate-x-1/2 -top-4"></div></div>
+<div class="w-3 h-40 bg-secondary-container border border-secondary mb-32 relative"><div class="absolute left-1/2 w-px h-56 bg-secondary -translate-x-1/2 -top-8"></div></div>
+</div>
+</div>
+</div>
+</section>
+<!-- Bottom Section: Tabs & Panels -->
+<section class="shrink-0 h-64 bg-surface-container-lowest border border-outline-variant rounded flex flex-col">
+<div class="h-10 border-b border-outline-variant flex px-4">
+<button class="h-full px-4 border-b-2 border-primary text-primary font-label-caps text-label-caps font-bold transition-colors">NEWS &amp; ANNOUNCEMENTS</button>
+<button class="h-full px-4 border-b-2 border-transparent text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps transition-colors">FUND FLOW</button>
+<button class="h-full px-4 border-b-2 border-transparent text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps transition-colors">RESEARCH REPORTS</button>
+<button class="h-full px-4 border-b-2 border-transparent text-on-surface-variant hover:text-on-surface font-label-caps text-label-caps transition-colors">FINANCIALS</button>
+</div>
+<div class="flex-1 p-4 overflow-y-auto">
+<!-- News Timeline -->
+<div class="flex flex-col gap-0">
+<div class="flex gap-4 group">
+<div class="w-24 shrink-0 font-data-mono text-data-mono text-on-surface-variant pt-1 text-right">14:22 CST</div>
+<div class="relative flex flex-col items-center">
+<div class="w-2 h-2 rounded-full bg-outline z-10 group-hover:bg-primary transition-colors"></div>
+<div class="w-px h-full bg-outline-variant absolute top-2"></div>
+</div>
+<div class="pb-6 flex-1">
+<div class="flex items-start justify-between gap-4">
+<h4 class="font-body-sm text-body-sm text-on-surface font-semibold m-0 leading-tight hover:underline cursor-pointer">宁德时代前三季度净利润超预期，动力电池市占率稳居第一</h4>
+<span class="shrink-0 bg-secondary-fixed/20 text-secondary font-label-caps text-[9px] px-1.5 py-0.5 rounded border border-secondary/30">BULLISH</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1 line-clamp-1">财报显示，公司第三季度实现营收... </p>
+</div>
+</div>
+<div class="flex gap-4 group">
+<div class="w-24 shrink-0 font-data-mono text-data-mono text-on-surface-variant pt-1 text-right">09:15 CST</div>
+<div class="relative flex flex-col items-center">
+<div class="w-2 h-2 rounded-full bg-outline z-10 group-hover:bg-primary transition-colors"></div>
+<div class="w-px h-full bg-outline-variant absolute top-2"></div>
+</div>
+<div class="pb-6 flex-1">
+<div class="flex items-start justify-between gap-4">
+<h4 class="font-body-sm text-body-sm text-on-surface font-semibold m-0 leading-tight hover:underline cursor-pointer">多家机构上调评级，预计四季度出货量环比增长</h4>
+<span class="shrink-0 bg-secondary-fixed/20 text-secondary font-label-caps text-[9px] px-1.5 py-0.5 rounded border border-secondary/30">BULLISH</span>
+</div>
+</div>
+</div>
+<div class="flex gap-4 group">
+<div class="w-24 shrink-0 font-data-mono text-data-mono text-on-surface-variant pt-1 text-right">Yesterday</div>
+<div class="relative flex flex-col items-center">
+<div class="w-2 h-2 rounded-full bg-outline z-10 group-hover:bg-primary transition-colors"></div>
+<div class="w-px h-full bg-outline-variant absolute top-2"></div>
+</div>
+<div class="pb-6 flex-1">
+<div class="flex items-start justify-between gap-4">
+<h4 class="font-body-sm text-body-sm text-on-surface font-semibold m-0 leading-tight hover:underline cursor-pointer">原材料碳酸锂价格波动，短期利润率承压风险提示</h4>
+<span class="shrink-0 bg-error-container/50 text-error font-label-caps text-[9px] px-1.5 py-0.5 rounded border border-error/30">BEARISH</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>
