@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, KnowledgeRetrievalLog
+from app.core.config import settings
+from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, KnowledgeEmbedding, KnowledgeRetrievalLog
 from app.schemas.knowledge import (
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentDetail,
@@ -18,6 +20,7 @@ from app.schemas.knowledge import (
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
 )
+from app.services.embedding_client import EmbeddingError, embed_texts
 
 
 def ensure_knowledge_fts(db: Session) -> None:
@@ -106,6 +109,7 @@ def delete_document(db: Session, document_id: int) -> bool:
     document = db.get(KnowledgeDocument, document_id)
     if not document:
         return False
+    db.execute(delete(KnowledgeEmbedding).where(KnowledgeEmbedding.document_id == document_id))
     db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id))
     db.execute(text("DELETE FROM knowledge_chunks_fts WHERE document_id = :document_id"), {"document_id": document_id})
     db.delete(document)
@@ -128,7 +132,7 @@ def reindex_document(db: Session, document_id: int) -> KnowledgeDocumentDetail |
 
 def search_knowledge(db: Session, payload: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
     ensure_knowledge_fts(db)
-    rows = _fts_search(db, payload)
+    rows = _merge_search_rows(_fts_search(db, payload), _vector_search(db, payload))
     if not rows:
         rows = _fallback_search(db, payload)
     items = [_row_to_search_item(row) for row in rows[: payload.top_k]]
@@ -196,6 +200,7 @@ def document_detail(db: Session, document: KnowledgeDocument) -> KnowledgeDocume
 
 
 def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:
+    db.execute(delete(KnowledgeEmbedding).where(KnowledgeEmbedding.document_id == document.id))
     db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
     db.execute(text("DELETE FROM knowledge_chunks_fts WHERE document_id = :document_id"), {"document_id": document.id})
     chunks = _chunk_text(document.content)
@@ -229,6 +234,32 @@ def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:
     document.chunk_count = len(chunks)
     document.summary = _summarize(document.content)
     db.add(document)
+    db.flush()
+    _index_embeddings(db, document.id)
+
+
+def _index_embeddings(db: Session, document_id: int) -> None:
+    chunks = db.scalars(
+        select(KnowledgeChunk)
+        .where(KnowledgeChunk.document_id == document_id)
+        .order_by(KnowledgeChunk.chunk_index)
+    ).all()
+    if not chunks:
+        return
+    try:
+        vectors = embed_texts([chunk.content for chunk in chunks])
+    except EmbeddingError:
+        return
+    for chunk, vector in zip(chunks, vectors):
+        db.add(
+            KnowledgeEmbedding(
+                chunk_id=chunk.id,
+                document_id=document_id,
+                model=settings.embedding_model,
+                dimension=len(vector),
+                vector_json=json.dumps(vector),
+            )
+        )
 
 
 def _fts_search(db: Session, payload: KnowledgeSearchRequest) -> list[dict[str, Any]]:
@@ -282,6 +313,58 @@ def _fallback_search(db: Session, payload: KnowledgeSearchRequest) -> list[dict[
     return _filter_rows(sorted(rows, key=lambda item: item["rank"]), payload)
 
 
+def _vector_search(db: Session, payload: KnowledgeSearchRequest) -> list[dict[str, Any]]:
+    try:
+        query_vector = embed_texts([payload.query])[0]
+    except (EmbeddingError, IndexError):
+        return []
+    rows = db.execute(
+        text(
+            """
+            SELECT c.id AS chunk_id, c.document_id, c.content, c.summary, c.metadata_json,
+                   d.title, d.source, d.doc_type, d.symbols_json, d.tags_json,
+                   e.vector_json
+            FROM knowledge_embeddings e
+            JOIN knowledge_chunks c ON c.id = e.chunk_id
+            JOIN knowledge_documents d ON d.id = c.document_id
+            WHERE d.enabled = 1 AND e.model = :model
+            LIMIT 1000
+            """
+        ),
+        {"model": settings.embedding_model},
+    ).mappings()
+    scored: list[dict[str, Any]] = []
+    for row in rows:
+        data = dict(row)
+        vector = _json_float_list(data.pop("vector_json", "[]"))
+        if not vector:
+            continue
+        similarity = _cosine_similarity(query_vector, vector)
+        data["rank"] = -similarity
+        data["vector_score"] = similarity
+        scored.append(data)
+    return _filter_rows(sorted(scored, key=lambda item: item["rank"]), payload)
+
+
+def _merge_search_rows(
+    fts_rows: list[dict[str, Any]],
+    vector_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: dict[int, dict[str, Any]] = {}
+    for index, row in enumerate(fts_rows):
+        item = dict(row)
+        item["hybrid_score"] = item.get("hybrid_score", 0.0) + 1.0 / (index + 1)
+        merged[int(item["chunk_id"])] = item
+    for index, row in enumerate(vector_rows):
+        chunk_id = int(row["chunk_id"])
+        item = merged.get(chunk_id, dict(row))
+        item["hybrid_score"] = item.get("hybrid_score", 0.0) + 1.2 / (index + 1)
+        if "vector_score" in row:
+            item["vector_score"] = row["vector_score"]
+        merged[chunk_id] = item
+    return sorted(merged.values(), key=lambda item: item.get("hybrid_score", 0.0), reverse=True)
+
+
 def _filter_rows(rows: list[dict[str, Any]], payload: KnowledgeSearchRequest) -> list[dict[str, Any]]:
     result = []
     symbols = set(_normalize_list(payload.symbols))
@@ -302,7 +385,10 @@ def _filter_rows(rows: list[dict[str, Any]], payload: KnowledgeSearchRequest) ->
 
 def _row_to_search_item(row: dict[str, Any]) -> KnowledgeSearchItem:
     rank = float(row.get("rank", 0) or 0)
-    score = round(1 / (1 + max(rank, 0)), 4) if rank >= 0 else round(min(abs(rank), 10) / 10, 4)
+    if "hybrid_score" in row:
+        score = round(min(float(row["hybrid_score"]), 1.0), 4)
+    else:
+        score = round(1 / (1 + max(rank, 0)), 4) if rank >= 0 else round(min(abs(rank), 10) / 10, 4)
     return KnowledgeSearchItem(
         chunk_id=int(row["chunk_id"]),
         document_id=int(row["document_id"]),
@@ -383,3 +469,24 @@ def _json_dict(value: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_float_list(value: str) -> list[float]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [float(item) for item in parsed]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right) or not left:
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return dot / (left_norm * right_norm)

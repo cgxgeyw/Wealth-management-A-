@@ -3,7 +3,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_knowledge_document_create_search_and_tool() -> None:
+def test_knowledge_document_create_search_and_tool(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
     with TestClient(app) as client:
         created = client.post(
             "/api/knowledge/documents",
@@ -45,3 +47,40 @@ def test_knowledge_document_create_search_and_tool() -> None:
 
     assert tool_response.status_code == 200
     assert tool_response.json()["output"]["items"]
+
+
+def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:
+    def fake_embed_texts(texts: list[str]) -> list[list[float]]:
+        vectors = []
+        for text in texts:
+            if "储能" in text or "海外" in text:
+                vectors.append([1.0, 0.0, 0.0])
+            else:
+                vectors.append([0.0, 1.0, 0.0])
+        return vectors
+
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", fake_embed_texts)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/knowledge/documents",
+            json={
+                "title": "海外储能订单纪要",
+                "doc_type": "note",
+                "source": "manual",
+                "content": "海外大客户订单推动储能系统出货增长。",
+                "symbols": ["300750"],
+                "tags": ["储能"],
+            },
+        )
+        assert created.status_code == 200
+
+        searched = client.post(
+            "/api/knowledge/search",
+            json={"query": "海外储能", "symbols": ["300750"], "top_k": 3},
+        )
+
+    assert searched.status_code == 200
+    items = searched.json()["items"]
+    assert items
+    assert items[0]["title"] == "海外储能订单纪要"
