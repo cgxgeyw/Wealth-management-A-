@@ -20,6 +20,8 @@ from app.schemas.data_source import (
     LockupExpiryResponse,
     MarginTradingItem,
     MarginTradingResponse,
+    MacroIndicatorItem,
+    MacroIndicatorResponse,
     NewsItem,
     NewsResponse,
     NorthboundFlowItem,
@@ -27,6 +29,8 @@ from app.schemas.data_source import (
     RealtimeQuote,
     ResearchReportItem,
     ResearchReportResponse,
+    SectorSnapshotItem,
+    SectorSnapshotResponse,
 )
 
 
@@ -403,3 +407,60 @@ def test_agent_fundamental_and_capital_tools_execute_with_permissions(monkeypatc
     assert lockup.json()["output"]["items"][0]["shares"] == 10000.0
     assert margin.status_code == 200
     assert margin.json()["output"]["items"][0]["margin_balance"] == 2000000.0
+
+
+def test_agent_macro_and_quality_tools_execute_with_permissions(monkeypatch) -> None:
+    def fake_sector_snapshots(db, sector_type: str = "industry", limit: int = 20) -> SectorSnapshotResponse:
+        return SectorSnapshotResponse(
+            provider_key="pytest",
+            items=[
+                SectorSnapshotItem(
+                    code="BK0428",
+                    name="电池",
+                    change_percent=2.3,
+                    sector_type=sector_type,
+                )
+            ],
+        )
+
+    def fake_macro_indicator(db, indicator: str = "cpi", limit: int = 12) -> MacroIndicatorResponse:
+        return MacroIndicatorResponse(
+            indicator=indicator,
+            provider_key="pytest",
+            items=[MacroIndicatorItem(report_date="2026-06", values={"value": 1.5})],
+        )
+
+    monkeypatch.setattr("app.services.agent_tools.get_sector_snapshots", fake_sector_snapshots)
+    monkeypatch.setattr("app.services.agent_tools.get_macro_indicator", fake_macro_indicator)
+
+    tool_keys = ["data.quality", "sector.snapshots", "market.macro"]
+    with TestClient(app) as client:
+        registry = client.get("/api/agent-tools")
+        assert registry.status_code == 200
+        enabled_keys = {item["key"] for item in registry.json()["items"] if item["enabled"]}
+        assert set(tool_keys).issubset(enabled_keys)
+
+        client.patch(
+            "/api/agents/policy_industry",
+            json={"tools": tool_keys, "change_note": "enable macro tools"},
+        )
+        quality = client.post(
+            "/api/agent-tools/policy_industry/data.quality/run",
+            json={"params": {"log_limit": 20}},
+        )
+        sectors = client.post(
+            "/api/agent-tools/policy_industry/sector.snapshots/run",
+            json={"params": {"sector_type": "industry", "limit": 5}},
+        )
+        macro = client.post(
+            "/api/agent-tools/policy_industry/market.macro/run",
+            json={"params": {"indicator": "cpi", "limit": 5}},
+        )
+
+    assert quality.status_code == 200
+    assert quality.json()["output"]["items"]
+    assert "provider_key" in quality.json()["output"]["items"][0]
+    assert sectors.status_code == 200
+    assert sectors.json()["output"]["items"][0]["name"] == "电池"
+    assert macro.status_code == 200
+    assert macro.json()["output"]["items"][0]["values"]["value"] == 1.5

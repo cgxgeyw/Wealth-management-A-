@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.models.data_source import DataFetchLog, DataProvider
 from app.services.data_fetcher import (
     DataFetchError,
     get_announcements,
@@ -20,9 +22,11 @@ from app.services.data_fetcher import (
     get_lockup_expiry,
     get_market_news,
     get_margin_trading,
+    get_macro_indicator,
     get_northbound_flow,
     get_realtime_quote,
     get_research_reports,
+    get_sector_snapshots,
 )
 from app.services.stock_catalog import get_stock_profile
 from app.services.technical_indicators import calculate_indicators
@@ -184,29 +188,29 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "data.quality": ToolSpec(
         key="data.quality",
         name="数据质量",
-        description="读取数据质量评分与告警。执行器后续接入数据源健康服务。",
+        description="读取数据源质量评分、失败次数、缓存命中和最近错误信息。",
         category="risk",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "sector.snapshots": ToolSpec(
         key="sector.snapshots",
         name="板块概览",
-        description="读取行业/概念板块快照。执行器后续接入板块数据服务。",
+        description="读取行业或概念板块快照，复用现有板块数据源路由。",
         category="macro",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "market.macro": ToolSpec(
         key="market.macro",
         name="宏观指标",
-        description="读取 CPI、PMI 等宏观指标。执行器后续接入宏观数据服务。",
+        description="读取 CPI、PMI 等宏观指标，复用现有宏观数据源路由。",
         category="macro",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "document.write": ToolSpec(
         key="document.write",
@@ -489,6 +493,66 @@ def _margin_trading_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
     return _model_to_dict(data)
 
 
+def _data_quality_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    limit = _int_param(params, "log_limit", 500, 1, 2000)
+    providers = db.scalars(select(DataProvider).order_by(DataProvider.id)).all()
+    logs = db.scalars(select(DataFetchLog).order_by(desc(DataFetchLog.id)).limit(limit)).all()
+    items: list[dict[str, Any]] = []
+    for provider in providers:
+        provider_logs = [log for log in logs if log.provider_key == provider.key]
+        failures = [
+            log
+            for log in provider_logs
+            if log.status in {"failed", "unavailable", "auth_failed", "auth_required"}
+        ]
+        cache_hits = [log for log in provider_logs if log.cache_hit]
+        score = 100
+        if provider.health_status in {"unavailable", "auth_failed"}:
+            score -= 45
+        elif provider.health_status in {"degraded", "auth_required", "rate_limited", "stale"}:
+            score -= 25
+        elif provider.health_status == "disabled":
+            score -= 35
+        score -= min(len(failures) * 5, 40)
+        if provider_logs and len(cache_hits) / len(provider_logs) > 0.8:
+            score -= 5
+        latest_failure = failures[0] if failures else None
+        items.append(
+            {
+                "provider_key": provider.key,
+                "health_status": provider.health_status,
+                "score": max(score, 0),
+                "recent_total": len(provider_logs),
+                "recent_failures": len(failures),
+                "cache_hits": len(cache_hits),
+                "last_message": latest_failure.error_message if latest_failure else "",
+            }
+        )
+    return {"items": items}
+
+
+def _sector_snapshots_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    sector_type = str(params.get("sector_type") or "industry")
+    limit = _int_param(params, "limit", 20, 1, 100)
+    try:
+        data = get_sector_snapshots(db, sector_type=sector_type, limit=limit)
+    except DataFetchError as exc:
+        status_code = 400 if exc.error_type.startswith("invalid") else 502
+        raise AgentToolError(str(exc), status_code=status_code) from exc
+    return _model_to_dict(data)
+
+
+def _macro_indicator_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    indicator = str(params.get("indicator") or "cpi")
+    limit = _int_param(params, "limit", 12, 1, 120)
+    try:
+        data = get_macro_indicator(db, indicator=indicator, limit=limit)
+    except DataFetchError as exc:
+        status_code = 400 if exc.error_type.startswith("invalid") else 502
+        raise AgentToolError(str(exc), status_code=status_code) from exc
+    return _model_to_dict(data)
+
+
 def _write_document(_: Session, params: dict[str, Any]) -> dict[str, Any]:
     title = _require_text(params, "title")
     topic = _require_text(params, "topic")
@@ -554,5 +618,8 @@ _HANDLERS: dict[str, ToolHandler] = {
     "stock.dragon_tiger": _dragon_tiger_tool,
     "stock.lockup_expiry": _lockup_expiry_tool,
     "stock.margin_trading": _margin_trading_tool,
+    "data.quality": _data_quality_tool,
+    "sector.snapshots": _sector_snapshots_tool,
+    "market.macro": _macro_indicator_tool,
     "document.write": _write_document,
 }
