@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.agent import AgentConfig, AgentRun
 from app.schemas.agent_run import AgentRunCreateRequest, AgentRunRead, AgentRunStep
 from app.services.agent_tools import AgentToolError, execute_tool, get_tool_spec
+from app.services.llm_client import generate_run_conclusion
 from app.services.stock_catalog import get_stock_profile
 
 
@@ -227,27 +228,16 @@ def _build_result(
     agent_summaries: list[dict[str, Any]],
     steps: list[AgentRunStep],
 ) -> dict[str, Any]:
-    success_count = sum(1 for step in steps if step.status == "success")
-    failed_count = sum(1 for step in steps if step.status != "success")
-    confidence = 0 if not steps else round((success_count / len(steps)) * 100)
-    return {
-        "symbol": symbol,
-        "query": payload.query,
-        "mode": payload.mode,
-        "conclusion": "工具编排完成，等待模型层生成投研结论。",
-        "confidence": confidence,
-        "tool_success_count": success_count,
-        "tool_failed_count": failed_count,
-        "agent_summaries": agent_summaries,
-        "references": [
-            {
-                "agent_key": step.agent_key,
-                "tool_key": step.tool_key,
-                "status": step.status,
-            }
-            for step in steps
-        ],
-    }
+    result = generate_run_conclusion(symbol, payload, agent_summaries, steps)
+    result["references"] = [
+        {
+            "agent_key": step.agent_key,
+            "tool_key": step.tool_key,
+            "status": step.status,
+        }
+        for step in steps
+    ]
+    return result
 
 
 def _preview_output(output: dict[str, Any]) -> dict[str, Any]:

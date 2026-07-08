@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     database_url: str = "sqlite:///./data/app.db"
+    llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
+    llm_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias="LLM_BASE_URL",
+    )
+    llm_model: str = Field(default="gpt-4o-mini", validation_alias="LLM_MODEL")
+    llm_timeout_seconds: float = Field(default=45, validation_alias="LLM_TIMEOUT_SECONDS")
     cors_origins_raw: str = Field(
         default="http://127.0.0.1:5173,http://localhost:5173",
         validation_alias="CORS_ORIGINS",

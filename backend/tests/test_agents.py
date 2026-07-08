@@ -510,3 +510,45 @@ def test_agent_run_orchestrates_allowed_tools(monkeypatch) -> None:
     assert any(item["run_key"] == run_key for item in listed.json()["items"])
     assert fetched.status_code == 200
     assert fetched.json()["run_key"] == run_key
+
+
+def test_agent_run_uses_llm_result_when_configured(monkeypatch) -> None:
+    def fake_execute_tool(db, tool_key: str, params: dict) -> dict:
+        return {"symbol": params["symbol"], "price": 300.5, "provider_key": "pytest"}
+
+    def fake_call_chat_completion(symbol, payload, agent_summaries, steps) -> dict:
+        return {
+            "conclusion": "模型结论：谨慎观察",
+            "horizon": "daily",
+            "confidence": 68,
+            "key_evidence": ["行情工具已返回"],
+            "risks": ["外部测试风险"],
+            "watch_items": ["成交量"],
+            "summary": "模型摘要",
+        }
+
+    monkeypatch.setattr("app.services.agent_orchestrator.execute_tool", fake_execute_tool)
+    monkeypatch.setattr("app.services.llm_client.settings.llm_api_key", "test-key")
+    monkeypatch.setattr("app.services.llm_client.settings.llm_model", "test-model")
+    monkeypatch.setattr("app.services.llm_client._call_chat_completion", fake_call_chat_completion)
+
+    with TestClient(app) as client:
+        client.patch(
+            "/api/agents/data_steward",
+            json={"tools": ["stock.quote"], "change_note": "llm orchestration test"},
+        )
+        created = client.post(
+            "/api/agent-runs",
+            json={
+                "symbol": "300750",
+                "query": "测试模型总结",
+                "agent_keys": ["data_steward"],
+            },
+        )
+
+    assert created.status_code == 200
+    result = created.json()["result"]
+    assert result["conclusion"] == "模型结论：谨慎观察"
+    assert result["model_status"] == "llm_completed"
+    assert result["model"] == "test-model"
+    assert result["confidence"] == 68
