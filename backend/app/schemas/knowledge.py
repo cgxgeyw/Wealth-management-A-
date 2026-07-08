@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class KnowledgeDocumentCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     content: str = Field(min_length=1)
+    knowledge_base_id: int = 1
     doc_type: str = "note"
     source: str = "manual"
     symbols: list[str] = Field(default_factory=list)
@@ -14,6 +15,10 @@ class KnowledgeDocumentCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     published_at: str = ""
     enabled: bool = True
+    chunking_strategy: str = "paragraph"
+    chunk_size: int = Field(default=900, ge=100, le=8000)
+    chunk_overlap: int = Field(default=120, ge=0, le=2000)
+    separators: list[str] = Field(default_factory=lambda: ["\n\n", "\n", "。", "；"])
 
 
 class KnowledgeDocumentUpdateRequest(BaseModel):
@@ -29,6 +34,7 @@ class KnowledgeDocumentUpdateRequest(BaseModel):
 
 class KnowledgeDocumentRead(BaseModel):
     id: int
+    knowledge_base_id: int
     title: str
     doc_type: str
     source: str
@@ -39,6 +45,10 @@ class KnowledgeDocumentRead(BaseModel):
     status: str
     enabled: bool
     chunk_count: int
+    chunking_strategy: str
+    chunk_size: int
+    chunk_overlap: int
+    separators: list[str]
     published_at: str
     created_at: datetime
     updated_at: datetime
@@ -48,14 +58,46 @@ class KnowledgeDocumentListResponse(BaseModel):
     items: list[KnowledgeDocumentRead]
 
 
+class KnowledgeBaseCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    chunking_strategy: str = "paragraph"
+    chunk_size: int = Field(default=900, ge=100, le=8000)
+    chunk_overlap: int = Field(default=120, ge=0, le=2000)
+    separators: list[str] = Field(default_factory=lambda: ["\n\n", "\n", "。", "；"])
+
+
+class KnowledgeBaseRead(BaseModel):
+    id: int
+    name: str
+    description: str
+    chunking_strategy: str
+    chunk_size: int
+    chunk_overlap: int
+    separators: list[str]
+    document_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeBaseListResponse(BaseModel):
+    items: list[KnowledgeBaseRead]
+
+
 class KnowledgeChunkRead(BaseModel):
     id: int
     document_id: int
     chunk_index: int
     content: str
     summary: str
+    tags: list[str] = Field(default_factory=list)
     token_count: int
     metadata: dict[str, Any]
+
+
+class KnowledgeChunkUpdateRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+    tags: list[str] | None = None
 
 
 class KnowledgeDocumentDetail(KnowledgeDocumentRead):

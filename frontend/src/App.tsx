@@ -15,12 +15,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createAgentRun,
+  createKnowledgeBase,
   deleteKnowledgeDocument,
   fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
   fetchHealth,
+  fetchKnowledgeBases,
   fetchKnowledgeDocument,
   fetchKnowledgeFaissStatus,
   fetchKnowledgeDocuments,
@@ -33,6 +35,7 @@ import {
   searchKnowledge,
   testRunAgent,
   updateAgent,
+  updateKnowledgeChunk,
   uploadKnowledgeDocument,
   type AgentConfig,
   type AgentPromptVersion,
@@ -42,6 +45,8 @@ import {
   type AgentToolRunResponse,
   type AgentToolSpec,
   type HealthResponse,
+  type KnowledgeBase,
+  type KnowledgeChunk,
   type KnowledgeDocument,
   type KnowledgeDocumentDetail,
   type KnowledgeFaissStatus,
@@ -534,11 +539,19 @@ function sampleVariableValue(value: string): string {
 }
 
 function KnowledgeBasePage() {
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [selectedBaseId, setSelectedBaseId] = useState<number>(1);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
   const [matches, setMatches] = useState<KnowledgeSearchItem[]>([]);
   const [faissStatus, setFaissStatus] = useState<KnowledgeFaissStatus | null>(null);
   const [docQuery, setDocQuery] = useState("");
+  const [newBaseName, setNewBaseName] = useState("");
+  const [newBaseDescription, setNewBaseDescription] = useState("");
+  const [chunkingStrategy, setChunkingStrategy] = useState("paragraph");
+  const [chunkSize, setChunkSize] = useState(900);
+  const [chunkOverlap, setChunkOverlap] = useState(120);
+  const [separatorsText, setSeparatorsText] = useState("\\n\\n|\\n|。|；");
   const [searchQuery, setSearchQuery] = useState("宁德时代储能业务的增长驱动是什么？");
   const [searchDocTypes, setSearchDocTypes] = useState("");
   const [searchTags, setSearchTags] = useState("");
@@ -550,8 +563,27 @@ function KnowledgeBasePage() {
   const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
   const [reindexingAll, setReindexingAll] = useState(false);
 
-  async function loadDocuments(query = docQuery) {
-    const result = await fetchKnowledgeDocuments(query, 80);
+  const selectedBase = useMemo(
+    () => knowledgeBases.find((item) => item.id === selectedBaseId) ?? knowledgeBases[0] ?? null,
+    [knowledgeBases, selectedBaseId]
+  );
+
+  async function loadKnowledgeBases(nextSelectedId = selectedBaseId) {
+    const result = await fetchKnowledgeBases();
+    setKnowledgeBases(result.items);
+    const selected = result.items.find((item) => item.id === nextSelectedId) ?? result.items[0];
+    if (selected) {
+      setSelectedBaseId(selected.id);
+      setChunkingStrategy(selected.chunking_strategy);
+      setChunkSize(selected.chunk_size);
+      setChunkOverlap(selected.chunk_overlap);
+      setSeparatorsText(selected.separators.map(escapeSeparatorForInput).join("|"));
+    }
+    return selected;
+  }
+
+  async function loadDocuments(query = docQuery, knowledgeBaseId = selectedBaseId) {
+    const result = await fetchKnowledgeDocuments(query, 80, knowledgeBaseId);
     setDocuments(result.items);
   }
 
@@ -561,10 +593,53 @@ function KnowledgeBasePage() {
   }
 
   useEffect(() => {
-    Promise.all([loadDocuments(""), loadFaissStatus()]).catch((err: unknown) => {
+    async function bootstrap() {
+      const base = await loadKnowledgeBases();
+      await Promise.all([loadDocuments("", base?.id ?? selectedBaseId), loadFaissStatus()]);
+    }
+    bootstrap().catch((err: unknown) => {
       setMessage(err instanceof Error ? err.message : "知识库加载失败");
     });
   }, []);
+
+  async function switchKnowledgeBase(nextBaseId: number) {
+    const nextBase = knowledgeBases.find((item) => item.id === nextBaseId);
+    setSelectedBaseId(nextBaseId);
+    setSelectedDocument(null);
+    setDocuments([]);
+    if (nextBase) {
+      setChunkingStrategy(nextBase.chunking_strategy);
+      setChunkSize(nextBase.chunk_size);
+      setChunkOverlap(nextBase.chunk_overlap);
+      setSeparatorsText(nextBase.separators.map(escapeSeparatorForInput).join("|"));
+    }
+    await loadDocuments("", nextBaseId);
+  }
+
+  async function createBase() {
+    if (!newBaseName.trim()) {
+      setMessage("请输入知识库名称");
+      return;
+    }
+    try {
+      const created = await createKnowledgeBase({
+        name: newBaseName.trim(),
+        description: newBaseDescription.trim(),
+        chunking_strategy: chunkingStrategy,
+        chunk_size: chunkSize,
+        chunk_overlap: chunkOverlap,
+        separators: parseSeparators(separatorsText)
+      });
+      setNewBaseName("");
+      setNewBaseDescription("");
+      await loadKnowledgeBases(created.id);
+      await loadDocuments("", created.id);
+      setSelectedDocument(null);
+      setMessage(`已创建知识库：${created.name}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "知识库创建失败");
+    }
+  }
 
   async function uploadSelectedFiles() {
     if (selectedFiles.length === 0) {
@@ -575,14 +650,21 @@ function KnowledgeBasePage() {
     try {
       const uploaded: KnowledgeDocumentDetail[] = [];
       for (const file of selectedFiles) {
-        uploaded.push(await uploadKnowledgeDocument(file));
+        uploaded.push(await uploadKnowledgeDocument(file, {
+          knowledge_base_id: selectedBaseId,
+          chunking_strategy: chunkingStrategy,
+          chunk_size: chunkSize,
+          chunk_overlap: chunkOverlap,
+          separators: parseSeparators(separatorsText)
+        }));
       }
       const latest = uploaded[uploaded.length - 1];
       setMessage(`已导入 ${uploaded.length} 个文件，最新文档：${latest.title}`);
       setSelectedDocument(latest);
       setSearchQuery(latest.title);
       setSelectedFiles([]);
-      await loadDocuments("");
+      await loadDocuments("", selectedBaseId);
+      await loadKnowledgeBases(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文件导入失败");
@@ -610,7 +692,7 @@ function KnowledgeBasePage() {
       const result = await reindexAllKnowledgeDocuments();
       setFaissStatus(result.faiss);
       setMessage(`全量重建完成：${result.reindexed}/${result.total} 篇，失败 ${result.failed} 篇`);
-      await loadDocuments(docQuery);
+      await loadDocuments(docQuery, selectedBaseId);
       if (selectedDocument) {
         setSelectedDocument(await fetchKnowledgeDocument(selectedDocument.id));
       }
@@ -636,7 +718,7 @@ function KnowledgeBasePage() {
       const detail = await reindexKnowledgeDocument(documentId);
       setSelectedDocument(detail);
       setMessage(`已重建：${detail.title}，${detail.chunk_count} 个 chunks`);
-      await loadDocuments(docQuery);
+      await loadDocuments(docQuery, selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档重建失败");
@@ -650,7 +732,8 @@ function KnowledgeBasePage() {
         setSelectedDocument(null);
       }
       setMessage(`已删除：${removed.title}`);
-      await loadDocuments(docQuery);
+      await loadDocuments(docQuery, selectedBaseId);
+      await loadKnowledgeBases(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档删除失败");
@@ -674,6 +757,28 @@ function KnowledgeBasePage() {
     }
   }
 
+  async function saveChunk(chunk: KnowledgeChunk, content: string, tagsText: string) {
+    try {
+      const updated = await updateKnowledgeChunk(chunk.id, {
+        content,
+        tags: splitCsv(tagsText)
+      });
+      setSelectedDocument((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          chunks: current.chunks.map((item) => item.id === updated.id ? updated : item)
+        };
+      });
+      setMessage(`已保存 chunk:${updated.id}`);
+      await loadFaissStatus();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "分块保存失败");
+    }
+  }
+
   return (
     <div className="page-grid knowledge-layout">
       <div className="main-column">
@@ -683,6 +788,33 @@ function KnowledgeBasePage() {
           description="上传研报、公告、纪要、策略文档等资料，系统自动解析标题、正文、类型和标签并建立索引。"
           actions={<button className="btn btn-primary" disabled={uploadingFiles} onClick={uploadSelectedFiles} type="button">{uploadingFiles ? "导入中..." : "上传并索引"}</button>}
         >
+          <div className="form-grid compact">
+            <label>目标知识库
+              <select className="input" value={selectedBaseId} onChange={(event) => switchKnowledgeBase(Number(event.target.value))}>
+                {knowledgeBases.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>分块方式
+              <select className="input" value={chunkingStrategy} onChange={(event) => setChunkingStrategy(event.target.value)}>
+                <option value="paragraph">段落窗口</option>
+                <option value="characters">字符数</option>
+                <option value="separators">特殊符号</option>
+              </select>
+            </label>
+            <label>字符上限
+              <input className="input mono" min={100} max={8000} type="number" value={chunkSize} onChange={(event) => setChunkSize(Number(event.target.value) || 900)} />
+            </label>
+            <label>重叠字符
+              <input className="input mono" min={0} max={2000} type="number" value={chunkOverlap} onChange={(event) => setChunkOverlap(Number(event.target.value) || 0)} />
+            </label>
+          </div>
+          <div className="form-stack tight">
+            <label>特殊分隔符
+              <input className="input mono" value={separatorsText} onChange={(event) => setSeparatorsText(event.target.value)} />
+            </label>
+          </div>
           <div className="upload-zone">
             <input
               multiple
@@ -702,7 +834,7 @@ function KnowledgeBasePage() {
                 <small className="mono">{Math.ceil(file.size / 1024)} KB</small>
               </div>
             ))}
-            {selectedFiles.length === 0 ? <div className="empty-hint">成熟 RAG 的导入入口应该以文件为中心，标题、来源和元数据由系统自动提取。</div> : null}
+            {selectedFiles.length === 0 ? <div className="empty-hint">请选择要导入到“{selectedBase?.name ?? "知识库"}”的资料文件</div> : null}
           </div>
         </Panel>
 
@@ -716,17 +848,18 @@ function KnowledgeBasePage() {
         >
           <div className="toolbar">
             <input className="input" placeholder="搜索标题、标签、来源" value={docQuery} onChange={(event) => setDocQuery(event.target.value)} />
-            <button className="btn btn-secondary" onClick={() => loadDocuments(docQuery)} type="button">搜索</button>
-            <button className="btn btn-secondary" onClick={() => loadDocuments("")} type="button">刷新</button>
+            <button className="btn btn-secondary" onClick={() => loadDocuments(docQuery, selectedBaseId)} type="button">搜索</button>
+            <button className="btn btn-secondary" onClick={() => loadDocuments("", selectedBaseId)} type="button">刷新</button>
           </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>标题</th><th>类型</th><th>标签</th><th>状态</th><th>Chunks</th><th>操作</th></tr></thead>
+              <thead><tr><th>标题</th><th>类型</th><th>分块</th><th>标签</th><th>状态</th><th>Chunks</th><th>操作</th></tr></thead>
               <tbody>
                 {documents.map((document) => (
                   <tr key={document.id}>
                     <td>{document.title}</td>
                     <td>{document.doc_type}</td>
+                    <td className="mono">{document.chunking_strategy}</td>
                     <td><StatusBadge>{document.tags.join(",") || "未标注"}</StatusBadge></td>
                     <td><StatusBadge tone={document.status === "indexed" ? "green" : "amber"}>{document.status}</StatusBadge></td>
                     <td className="mono">{document.chunk_count}</td>
@@ -742,7 +875,7 @@ function KnowledgeBasePage() {
                 ))}
               </tbody>
             </table>
-            {documents.length === 0 ? <div className="empty-hint">暂无文档，先粘贴文本入库</div> : null}
+            {documents.length === 0 ? <div className="empty-hint">暂无文档，请先上传文件</div> : null}
           </div>
         </Panel>
 
@@ -751,7 +884,7 @@ function KnowledgeBasePage() {
             <div className="document-detail">
               <div className="report-block">
                 <div>
-                  <span className="label">{selectedDocument.doc_type} · {selectedDocument.source}</span>
+                  <span className="label">{selectedDocument.doc_type} · {selectedDocument.source} · {selectedDocument.chunking_strategy}</span>
                   <h3>{selectedDocument.title}</h3>
                   <p>{selectedDocument.summary || "暂无摘要"}</p>
                 </div>
@@ -765,10 +898,7 @@ function KnowledgeBasePage() {
               </div>
               <div className="chunk-list">
                 {selectedDocument.chunks.map((chunk) => (
-                  <div className="chunk-item" key={chunk.id}>
-                    <strong className="mono">chunk:{chunk.id} · {chunk.token_count} tokens</strong>
-                    <p>{chunk.content}</p>
-                  </div>
+                  <ChunkEditor chunk={chunk} key={chunk.id} onSave={saveChunk} />
                 ))}
               </div>
             </div>
@@ -777,6 +907,26 @@ function KnowledgeBasePage() {
       </div>
 
       <div className="side-column">
+        <Panel title="知识库">
+          <div className="knowledge-base-list">
+            {knowledgeBases.map((item) => (
+              <button
+                className={`knowledge-base-row ${item.id === selectedBaseId ? "active" : ""}`}
+                key={item.id}
+                onClick={() => switchKnowledgeBase(item.id)}
+                type="button"
+              >
+                <strong>{item.name}</strong>
+                <span>{item.document_count} docs · {item.chunking_strategy} · {item.chunk_size}/{item.chunk_overlap}</span>
+              </button>
+            ))}
+          </div>
+          <div className="form-stack">
+            <label>新知识库名称<input className="input" value={newBaseName} onChange={(event) => setNewBaseName(event.target.value)} /></label>
+            <label>描述<input className="input" value={newBaseDescription} onChange={(event) => setNewBaseDescription(event.target.value)} /></label>
+            <button className="btn btn-primary full" onClick={createBase} type="button">创建知识库</button>
+          </div>
+        </Panel>
         <Panel
           title="向量索引维护"
           description="FAISS 是可选加速层；不可用时会自动回退到 SQLite 向量扫描和 FTS。"
@@ -828,8 +978,58 @@ function KnowledgeBasePage() {
   );
 }
 
+function ChunkEditor({
+  chunk,
+  onSave
+}: {
+  chunk: KnowledgeChunk;
+  onSave: (chunk: KnowledgeChunk, content: string, tagsText: string) => Promise<void>;
+}) {
+  const [content, setContent] = useState(chunk.content);
+  const [tagsText, setTagsText] = useState(chunk.tags.join(","));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setContent(chunk.content);
+    setTagsText(chunk.tags.join(","));
+  }, [chunk]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(chunk, content, tagsText);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="chunk-item">
+      <div className="chunk-head">
+        <strong className="mono">chunk:{chunk.id} · #{chunk.chunk_index + 1} · {chunk.token_count} tokens</strong>
+        <button className="btn btn-table" disabled={saving} onClick={save} type="button">{saving ? "保存中" : "保存"}</button>
+      </div>
+      <textarea className="textarea chunk-textarea" value={content} onChange={(event) => setContent(event.target.value)} />
+      <label className="chunk-tags">标签
+        <input className="input" value={tagsText} onChange={(event) => setTagsText(event.target.value)} />
+      </label>
+    </div>
+  );
+}
+
 function splitCsv(value: string): string[] {
   return value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function parseSeparators(value: string): string[] {
+  return value
+    .split("|")
+    .map((item) => item.replace(/\\n/g, "\n").replace(/\\t/g, "\t"))
+    .filter(Boolean);
+}
+
+function escapeSeparatorForInput(value: string): string {
+  return value.replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 }
 
 function TasksReportsPage() {

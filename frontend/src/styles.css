@@ -652,6 +652,10 @@ tbody tr:hover,
   padding: 12px;
 }
 
+.form-stack.tight {
+  padding-top: 0;
+}
+
 .form-stack label,
 .form-grid label,
 .prompt-grid label {
@@ -779,12 +783,58 @@ tbody tr:hover,
   background: var(--panel);
 }
 
+.chunk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chunk-textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.chunk-tags {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .chunk-item p {
   margin: 0;
   color: var(--ink-soft);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.knowledge-base-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px 12px 0;
+}
+
+.knowledge-base-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  color: var(--ink);
+  background: var(--panel);
+  text-align: left;
+}
+
+.knowledge-base-row.active {
+  border-color: var(--ink);
+  background: #eef2f6;
+}
+
+.knowledge-base-row span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .search-row,

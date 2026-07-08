@@ -6,10 +6,28 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
 
+class KnowledgeBase(Base):
+    __tablename__ = "knowledge_bases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(160), default="默认知识库", index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    chunking_strategy: Mapped[str] = mapped_column(String(40), default="paragraph")
+    chunk_size: Mapped[int] = mapped_column(Integer, default=900)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, default=120)
+    separators_json: Mapped[str] = mapped_column(Text, default='["\\n\\n", "\\n", "。", "；"]')
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    knowledge_base_id: Mapped[int] = mapped_column(Integer, default=1, index=True)
     title: Mapped[str] = mapped_column(String(240), index=True)
     doc_type: Mapped[str] = mapped_column(String(80), default="note", index=True)
     source: Mapped[str] = mapped_column(String(160), default="manual")
@@ -21,6 +39,10 @@ class KnowledgeDocument(Base):
     status: Mapped[str] = mapped_column(String(40), default="indexed", index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunking_strategy: Mapped[str] = mapped_column(String(40), default="paragraph")
+    chunk_size: Mapped[int] = mapped_column(Integer, default=900)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, default=120)
+    separators_json: Mapped[str] = mapped_column(Text, default='["\\n\\n", "\\n", "。", "；"]')
     published_at: Mapped[str] = mapped_column(String(40), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

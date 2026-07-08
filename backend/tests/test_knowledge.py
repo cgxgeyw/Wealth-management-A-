@@ -74,6 +74,64 @@ def test_knowledge_document_upload_extracts_file_content(monkeypatch) -> None:
     assert document["metadata"]["filename"] == "储能行业调研.md"
 
 
+def test_knowledge_bases_upload_chunking_and_edit_chunks(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        bases = client.get("/api/knowledge/bases")
+        assert bases.status_code == 200
+        assert any(item["name"] == "默认知识库" for item in bases.json()["items"])
+
+        created_base = client.post(
+            "/api/knowledge/bases",
+            json={
+                "name": "研报知识库",
+                "description": "券商研报和行业调研",
+                "chunking_strategy": "characters",
+                "chunk_size": 120,
+                "chunk_overlap": 10,
+                "separators": ["\n\n", "。"],
+            },
+        )
+        assert created_base.status_code == 200
+        base = created_base.json()
+        assert base["name"] == "研报知识库"
+        assert base["chunking_strategy"] == "characters"
+
+        content = "新能源车销量改善。" * 20 + "\n\n储能招标节奏加快。" * 15
+        uploaded = client.post(
+            f"/api/knowledge/documents/upload?knowledge_base_id={base['id']}&chunking_strategy=characters&chunk_size=120&chunk_overlap=10",
+            files={
+                "file": (
+                    "新能源行业周报.txt",
+                    content,
+                    "text/plain; charset=utf-8",
+                )
+            },
+        )
+        assert uploaded.status_code == 200
+        document = uploaded.json()
+        assert document["knowledge_base_id"] == base["id"]
+        assert document["chunking_strategy"] == "characters"
+        assert document["chunk_size"] == 120
+        assert document["chunk_count"] > 1
+        assert document["chunks"][0]["tags"]
+
+        listed = client.get(f"/api/knowledge/documents?knowledge_base_id={base['id']}")
+        assert listed.status_code == 200
+        assert any(item["id"] == document["id"] for item in listed.json()["items"])
+
+        chunk_id = document["chunks"][0]["id"]
+        updated = client.patch(
+            f"/api/knowledge/chunks/{chunk_id}",
+            json={"content": "编辑后的分块正文，重点关注储能和新能源车。", "tags": ["储能", "新能源车"]},
+        )
+        assert updated.status_code == 200
+        chunk = updated.json()
+        assert "编辑后的分块正文" in chunk["content"]
+        assert chunk["tags"] == ["储能", "新能源车"]
+
+
 def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:
     def fake_embed_texts(texts: list[str]) -> list[list[float]]:
         vectors = []

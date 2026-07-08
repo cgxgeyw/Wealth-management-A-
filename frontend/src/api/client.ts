@@ -152,6 +152,7 @@ export interface AgentRunCreatePayload {
 
 export interface KnowledgeDocument {
   id: number;
+  knowledge_base_id: number;
   title: string;
   doc_type: string;
   source: string;
@@ -162,22 +163,55 @@ export interface KnowledgeDocument {
   status: string;
   enabled: boolean;
   chunk_count: number;
+  chunking_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  separators: string[];
   published_at: string;
   created_at: string;
   updated_at: string;
 }
 
+export interface KnowledgeBase {
+  id: number;
+  name: string;
+  description: string;
+  chunking_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  separators: string[];
+  document_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeBaseListResponse {
+  items: KnowledgeBase[];
+}
+
+export interface KnowledgeBaseCreatePayload {
+  name: string;
+  description?: string;
+  chunking_strategy?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separators?: string[];
+}
+
+export interface KnowledgeChunk {
+  id: number;
+  document_id: number;
+  chunk_index: number;
+  content: string;
+  summary: string;
+  tags: string[];
+  token_count: number;
+  metadata: Record<string, unknown>;
+}
+
 export interface KnowledgeDocumentDetail extends KnowledgeDocument {
   content: string;
-  chunks: Array<{
-    id: number;
-    document_id: number;
-    chunk_index: number;
-    content: string;
-    summary: string;
-    token_count: number;
-    metadata: Record<string, unknown>;
-  }>;
+  chunks: KnowledgeChunk[];
 }
 
 export interface KnowledgeDocumentListResponse {
@@ -187,6 +221,7 @@ export interface KnowledgeDocumentListResponse {
 export interface KnowledgeDocumentCreatePayload {
   title: string;
   content: string;
+  knowledge_base_id?: number;
   doc_type?: string;
   source?: string;
   symbols?: string[];
@@ -194,6 +229,23 @@ export interface KnowledgeDocumentCreatePayload {
   metadata?: Record<string, unknown>;
   published_at?: string;
   enabled?: boolean;
+  chunking_strategy?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separators?: string[];
+}
+
+export interface KnowledgeUploadOptions {
+  knowledge_base_id?: number;
+  chunking_strategy?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separators?: string[];
+}
+
+export interface KnowledgeChunkUpdatePayload {
+  content?: string;
+  tags?: string[];
 }
 
 export interface KnowledgeSearchItem {
@@ -760,8 +812,23 @@ export function fetchAgentRun(runKey: string): Promise<AgentRun> {
   return getJson<AgentRun>(`/api/agent-runs/${encodeURIComponent(runKey)}`);
 }
 
-export function fetchKnowledgeDocuments(q = "", limit = 50): Promise<KnowledgeDocumentListResponse> {
+export function fetchKnowledgeBases(): Promise<KnowledgeBaseListResponse> {
+  return getJson<KnowledgeBaseListResponse>("/api/knowledge/bases");
+}
+
+export function createKnowledgeBase(payload: KnowledgeBaseCreatePayload): Promise<KnowledgeBase> {
+  return postJson<KnowledgeBase>("/api/knowledge/bases", payload);
+}
+
+export function fetchKnowledgeDocuments(
+  q = "",
+  limit = 50,
+  knowledgeBaseId?: number
+): Promise<KnowledgeDocumentListResponse> {
   const params = new URLSearchParams({ q, limit: String(limit) });
+  if (knowledgeBaseId) {
+    params.set("knowledge_base_id", String(knowledgeBaseId));
+  }
   return getJson<KnowledgeDocumentListResponse>(`/api/knowledge/documents?${params}`);
 }
 
@@ -773,10 +840,30 @@ export function createKnowledgeDocument(payload: KnowledgeDocumentCreatePayload)
   return postJson<KnowledgeDocumentDetail>("/api/knowledge/documents", payload);
 }
 
-export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocumentDetail> {
+export async function uploadKnowledgeDocument(
+  file: File,
+  options: KnowledgeUploadOptions = {}
+): Promise<KnowledgeDocumentDetail> {
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch("/api/knowledge/documents/upload", {
+  const params = new URLSearchParams();
+  if (options.knowledge_base_id) {
+    params.set("knowledge_base_id", String(options.knowledge_base_id));
+  }
+  if (options.chunking_strategy) {
+    params.set("chunking_strategy", options.chunking_strategy);
+  }
+  if (options.chunk_size) {
+    params.set("chunk_size", String(options.chunk_size));
+  }
+  if (options.chunk_overlap !== undefined) {
+    params.set("chunk_overlap", String(options.chunk_overlap));
+  }
+  if (options.separators?.length) {
+    params.set("separators", options.separators.join("|"));
+  }
+  const suffix = params.toString() ? `?${params}` : "";
+  const response = await fetch(`/api/knowledge/documents/upload${suffix}`, {
     method: "POST",
     body
   });
@@ -784,6 +871,13 @@ export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocu
     throw new Error(`请求失败：${response.status}`);
   }
   return response.json() as Promise<KnowledgeDocumentDetail>;
+}
+
+export function updateKnowledgeChunk(
+  chunkId: number,
+  payload: KnowledgeChunkUpdatePayload
+): Promise<KnowledgeChunk> {
+  return patchJson<KnowledgeChunk>(`/api/knowledge/chunks/${chunkId}`, payload);
 }
 
 export function deleteKnowledgeDocument(documentId: number): Promise<KnowledgeDocument> {

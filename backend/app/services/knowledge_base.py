@@ -8,12 +8,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, KnowledgeEmbedding, KnowledgeRetrievalLog
+from app.models.knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeDocument, KnowledgeEmbedding, KnowledgeRetrievalLog
 from app.schemas.knowledge import (
+    KnowledgeBaseCreateRequest,
+    KnowledgeBaseListResponse,
+    KnowledgeBaseRead,
+    KnowledgeChunkRead,
+    KnowledgeChunkUpdateRequest,
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentDetail,
     KnowledgeDocumentRead,
@@ -29,6 +34,7 @@ from app.services.knowledge_faiss import search_faiss
 
 
 def ensure_knowledge_fts(db: Session) -> None:
+    _ensure_knowledge_schema(db)
     db.execute(
         text(
             """
@@ -38,11 +44,90 @@ def ensure_knowledge_fts(db: Session) -> None:
         )
     )
     db.commit()
+    _ensure_default_knowledge_base(db)
+
+
+def _ensure_knowledge_schema(db: Session) -> None:
+    KnowledgeBase.__table__.create(bind=db.get_bind(), checkfirst=True)
+    KnowledgeDocument.__table__.create(bind=db.get_bind(), checkfirst=True)
+    KnowledgeChunk.__table__.create(bind=db.get_bind(), checkfirst=True)
+    KnowledgeEmbedding.__table__.create(bind=db.get_bind(), checkfirst=True)
+    KnowledgeRetrievalLog.__table__.create(bind=db.get_bind(), checkfirst=True)
+    _ensure_columns(
+        db,
+        "knowledge_documents",
+        {
+            "knowledge_base_id": "INTEGER DEFAULT 1",
+            "chunking_strategy": "VARCHAR(40) DEFAULT 'paragraph'",
+            "chunk_size": "INTEGER DEFAULT 900",
+            "chunk_overlap": "INTEGER DEFAULT 120",
+            "separators_json": "TEXT DEFAULT '[\"\\n\\n\", \"\\n\", \"。\", \"；\"]'",
+        },
+    )
+
+
+def _ensure_columns(db: Session, table: str, columns: dict[str, str]) -> None:
+    existing = {row[1] for row in db.execute(text(f"PRAGMA table_info({table})")).all()}
+    for name, ddl in columns.items():
+        if name not in existing:
+            db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+    db.commit()
+
+
+def _ensure_default_knowledge_base(db: Session) -> KnowledgeBase:
+    item = db.get(KnowledgeBase, 1)
+    if item:
+        return item
+    item = KnowledgeBase(id=1, name="默认知识库", description="默认投研资料库")
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def list_knowledge_bases(db: Session) -> KnowledgeBaseListResponse:
+    ensure_knowledge_fts(db)
+    bases = db.scalars(select(KnowledgeBase).order_by(KnowledgeBase.id)).all()
+    return KnowledgeBaseListResponse(items=[knowledge_base_read(db, item) for item in bases])
+
+
+def create_knowledge_base(db: Session, payload: KnowledgeBaseCreateRequest) -> KnowledgeBaseRead:
+    ensure_knowledge_fts(db)
+    item = KnowledgeBase(
+        name=payload.name.strip(),
+        description=payload.description.strip(),
+        chunking_strategy=payload.chunking_strategy,
+        chunk_size=payload.chunk_size,
+        chunk_overlap=payload.chunk_overlap,
+        separators_json=json.dumps(_normalize_list(payload.separators), ensure_ascii=False),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return knowledge_base_read(db, item)
+
+
+def knowledge_base_read(db: Session, item: KnowledgeBase) -> KnowledgeBaseRead:
+    count = db.scalar(select(func.count(KnowledgeDocument.id)).where(KnowledgeDocument.knowledge_base_id == item.id))
+    return KnowledgeBaseRead(
+        id=item.id,
+        name=item.name,
+        description=item.description,
+        chunking_strategy=item.chunking_strategy,
+        chunk_size=item.chunk_size,
+        chunk_overlap=item.chunk_overlap,
+        separators=_json_list(item.separators_json),
+        document_count=int(count or 0),
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
 
 
 def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> KnowledgeDocumentDetail:
     ensure_knowledge_fts(db)
+    knowledge_base = db.get(KnowledgeBase, payload.knowledge_base_id) or _ensure_default_knowledge_base(db)
     document = KnowledgeDocument(
+        knowledge_base_id=knowledge_base.id,
         title=payload.title.strip(),
         doc_type=payload.doc_type.strip() or "note",
         source=payload.source.strip() or "manual",
@@ -54,6 +139,13 @@ def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> Kno
         enabled=payload.enabled,
         published_at=payload.published_at,
         status="indexed",
+        chunking_strategy=payload.chunking_strategy or knowledge_base.chunking_strategy,
+        chunk_size=payload.chunk_size or knowledge_base.chunk_size,
+        chunk_overlap=payload.chunk_overlap if payload.chunk_overlap is not None else knowledge_base.chunk_overlap,
+        separators_json=json.dumps(
+            _normalize_list(payload.separators) or _json_list(knowledge_base.separators_json),
+            ensure_ascii=False,
+        ),
     )
     db.add(document)
     db.flush()
@@ -69,22 +161,40 @@ def create_document_from_file(
     filename: str,
     content_type: str,
     data: bytes,
+    knowledge_base_id: int = 1,
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: list[str] | None = None,
 ) -> KnowledgeDocumentDetail:
+    knowledge_base = db.get(KnowledgeBase, knowledge_base_id) or _ensure_default_knowledge_base(db)
     parsed = _parse_uploaded_file(filename, content_type, data)
     payload = KnowledgeDocumentCreateRequest(
         title=parsed["title"],
         content=parsed["content"],
+        knowledge_base_id=knowledge_base.id,
         doc_type=parsed["doc_type"],
         source=f"upload:{filename}",
         symbols=[],
         tags=parsed["tags"],
         metadata=parsed["metadata"],
+        chunking_strategy=chunking_strategy or knowledge_base.chunking_strategy,
+        chunk_size=chunk_size or knowledge_base.chunk_size,
+        chunk_overlap=chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
+        separators=separators or _json_list(knowledge_base.separators_json),
     )
     return create_document(db, payload)
 
 
-def list_documents(db: Session, q: str = "", limit: int = 50) -> list[KnowledgeDocumentRead]:
+def list_documents(
+    db: Session,
+    q: str = "",
+    limit: int = 50,
+    knowledge_base_id: int | None = None,
+) -> list[KnowledgeDocumentRead]:
     query = select(KnowledgeDocument).order_by(KnowledgeDocument.id.desc()).limit(min(max(limit, 1), 200))
+    if knowledge_base_id:
+        query = query.where(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
     documents = db.scalars(query).all()
     if q.strip():
         needle = q.strip().lower()
@@ -211,6 +321,7 @@ def search_knowledge(db: Session, payload: KnowledgeSearchRequest) -> KnowledgeS
 def document_read(document: KnowledgeDocument) -> KnowledgeDocumentRead:
     return KnowledgeDocumentRead(
         id=document.id,
+        knowledge_base_id=document.knowledge_base_id,
         title=document.title,
         doc_type=document.doc_type,
         source=document.source,
@@ -221,10 +332,66 @@ def document_read(document: KnowledgeDocument) -> KnowledgeDocumentRead:
         status=document.status,
         enabled=document.enabled,
         chunk_count=document.chunk_count,
+        chunking_strategy=document.chunking_strategy,
+        chunk_size=document.chunk_size,
+        chunk_overlap=document.chunk_overlap,
+        separators=_json_list(document.separators_json),
         published_at=document.published_at,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
+
+
+def update_chunk(
+    db: Session,
+    chunk_id: int,
+    payload: KnowledgeChunkUpdateRequest,
+) -> KnowledgeChunkRead | None:
+    ensure_knowledge_fts(db)
+    chunk = db.get(KnowledgeChunk, chunk_id)
+    if not chunk:
+        return None
+    document = db.get(KnowledgeDocument, chunk.document_id)
+    if not document:
+        return None
+    metadata = _json_dict(chunk.metadata_json)
+    if payload.content is not None:
+        chunk.content = payload.content
+        chunk.summary = _summarize(payload.content, max_chars=120)
+        chunk.token_count = max(len(payload.content) // 2, 1)
+        chunk.content_hash = hashlib.sha256(payload.content.encode("utf-8")).hexdigest()
+    if payload.tags is not None:
+        tags = _normalize_list(payload.tags)
+    else:
+        tags = _json_list(metadata.get("tags_json", "[]"))
+    metadata["tags"] = tags
+    metadata["tags_json"] = json.dumps(tags, ensure_ascii=False)
+    metadata["edited"] = True
+    chunk.metadata_json = json.dumps(metadata, ensure_ascii=False)
+    db.add(chunk)
+    db.execute(text("DELETE FROM knowledge_chunks_fts WHERE chunk_id = :chunk_id"), {"chunk_id": chunk.id})
+    db.execute(
+        text(
+            """
+            INSERT INTO knowledge_chunks_fts(chunk_id, document_id, title, content, tags)
+            VALUES (:chunk_id, :document_id, :title, :content, :tags)
+            """
+        ),
+        {
+            "chunk_id": chunk.id,
+            "document_id": document.id,
+            "title": document.title,
+            "content": chunk.content,
+            "tags": " ".join(tags),
+        },
+    )
+    db.execute(delete(KnowledgeEmbedding).where(KnowledgeEmbedding.chunk_id == chunk.id))
+    db.flush()
+    _index_embeddings_for_chunks(db, [chunk])
+    db.commit()
+    db.refresh(chunk)
+    rebuild_faiss_index(db)
+    return chunk_read(chunk)
 
 
 def document_detail(db: Session, document: KnowledgeDocument) -> KnowledgeDocumentDetail:
@@ -237,18 +404,21 @@ def document_detail(db: Session, document: KnowledgeDocument) -> KnowledgeDocume
     return KnowledgeDocumentDetail(
         **base,
         content=document.content,
-        chunks=[
-            {
-                "id": chunk.id,
-                "document_id": chunk.document_id,
-                "chunk_index": chunk.chunk_index,
-                "content": chunk.content,
-                "summary": chunk.summary,
-                "token_count": chunk.token_count,
-                "metadata": _json_dict(chunk.metadata_json),
-            }
-            for chunk in chunks
-        ],
+        chunks=[chunk_read(chunk) for chunk in chunks],
+    )
+
+
+def chunk_read(chunk: KnowledgeChunk) -> KnowledgeChunkRead:
+    metadata = _json_dict(chunk.metadata_json)
+    return KnowledgeChunkRead(
+        id=chunk.id,
+        document_id=chunk.document_id,
+        chunk_index=chunk.chunk_index,
+        content=chunk.content,
+        summary=chunk.summary,
+        tags=_json_list(metadata.get("tags_json", "[]")),
+        token_count=chunk.token_count,
+        metadata=metadata,
     )
 
 
@@ -336,12 +506,33 @@ def _tags_from_filename(filename: str) -> list[str]:
     return tokens[:6]
 
 
+def _chunk_tags(content: str, document: KnowledgeDocument) -> list[str]:
+    tags: list[str] = []
+    for item in _json_list(document.symbols_json) + _json_list(document.tags_json):
+        if item not in tags:
+            tags.append(item)
+    for item in _keywords(content):
+        if len(item) < 2 or item in tags:
+            continue
+        tags.append(item)
+        if len(tags) >= 8:
+            break
+    return tags
+
+
 def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:
     db.execute(delete(KnowledgeEmbedding).where(KnowledgeEmbedding.document_id == document.id))
     db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
     db.execute(text("DELETE FROM knowledge_chunks_fts WHERE document_id = :document_id"), {"document_id": document.id})
-    chunks = _chunk_text(document.content)
+    chunks = _chunk_text(
+        document.content,
+        strategy=document.chunking_strategy,
+        max_chars=document.chunk_size,
+        overlap=document.chunk_overlap,
+        separators=_json_list(document.separators_json),
+    )
     for index, chunk_text in enumerate(chunks):
+        chunk_tags = _chunk_tags(chunk_text, document)
         chunk = KnowledgeChunk(
             document_id=document.id,
             chunk_index=index,
@@ -349,7 +540,14 @@ def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:
             summary=_summarize(chunk_text, max_chars=120),
             token_count=max(len(chunk_text) // 2, 1),
             content_hash=hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
-            metadata_json=json.dumps({"chunking": "paragraph_window_v1"}, ensure_ascii=False),
+            metadata_json=json.dumps(
+                {
+                    "chunking": document.chunking_strategy,
+                    "tags": chunk_tags,
+                    "tags_json": json.dumps(chunk_tags, ensure_ascii=False),
+                },
+                ensure_ascii=False,
+            ),
         )
         db.add(chunk)
         db.flush()
@@ -365,7 +563,7 @@ def _replace_chunks(db: Session, document: KnowledgeDocument) -> None:
                 "document_id": document.id,
                 "title": document.title,
                 "content": chunk.content,
-                "tags": " ".join(_json_list(document.tags_json) + _json_list(document.symbols_json)),
+                "tags": " ".join(chunk_tags),
             },
         )
     document.chunk_count = len(chunks)
@@ -383,6 +581,12 @@ def _index_embeddings(db: Session, document_id: int) -> None:
     ).all()
     if not chunks:
         return
+    _index_embeddings_for_chunks(db, chunks)
+
+
+def _index_embeddings_for_chunks(db: Session, chunks: list[KnowledgeChunk]) -> None:
+    if not chunks:
+        return
     try:
         vectors = embed_texts([chunk.content for chunk in chunks])
     except EmbeddingError:
@@ -391,7 +595,7 @@ def _index_embeddings(db: Session, document_id: int) -> None:
         db.add(
             KnowledgeEmbedding(
                 chunk_id=chunk.id,
-                document_id=document_id,
+                document_id=chunk.document_id,
                 model=settings.embedding_model,
                 dimension=len(vector),
                 vector_json=json.dumps(vector),
@@ -587,7 +791,17 @@ def _row_to_search_item(row: dict[str, Any]) -> KnowledgeSearchItem:
     )
 
 
-def _chunk_text(content: str, max_chars: int = 900, overlap: int = 120) -> list[str]:
+def _chunk_text(
+    content: str,
+    strategy: str = "paragraph",
+    max_chars: int = 900,
+    overlap: int = 120,
+    separators: list[str] | None = None,
+) -> list[str]:
+    if strategy == "characters":
+        return _chunk_by_characters(content, max_chars=max_chars, overlap=overlap)
+    if strategy == "separators":
+        return _chunk_by_separators(content, separators or ["\n\n", "\n", "。", "；"], max_chars=max_chars, overlap=overlap)
     paragraphs = [item.strip() for item in re.split(r"\n\s*\n", content) if item.strip()]
     chunks: list[str] = []
     current = ""
@@ -602,6 +816,43 @@ def _chunk_text(content: str, max_chars: int = 900, overlap: int = 120) -> list[
     if current:
         chunks.append(current)
     return chunks or [content[:max_chars]]
+
+
+def _chunk_by_characters(content: str, max_chars: int, overlap: int) -> list[str]:
+    compact = content.strip()
+    if not compact:
+        return []
+    max_chars = max(max_chars, 1)
+    overlap = min(max(overlap, 0), max_chars - 1) if max_chars > 1 else 0
+    chunks = []
+    start = 0
+    while start < len(compact):
+        end = min(start + max_chars, len(compact))
+        chunks.append(compact[start:end])
+        if end >= len(compact):
+            break
+        start = max(end - overlap, start + 1)
+    return chunks
+
+
+def _chunk_by_separators(content: str, separators: list[str], max_chars: int, overlap: int) -> list[str]:
+    escaped = [re.escape(item) for item in separators if item]
+    if not escaped:
+        return _chunk_by_characters(content, max_chars=max_chars, overlap=overlap)
+    parts = [item.strip() for item in re.split("|".join(escaped), content) if item.strip()]
+    chunks: list[str] = []
+    current = ""
+    for part in parts:
+        if len(current) + len(part) + 1 <= max_chars:
+            current = f"{current}\n{part}".strip()
+            continue
+        if current:
+            chunks.append(current)
+        prefix = current[-overlap:] if overlap and current else ""
+        current = f"{prefix}\n{part}".strip() if prefix else part
+    if current:
+        chunks.append(current)
+    return chunks or _chunk_by_characters(content, max_chars=max_chars, overlap=overlap)
 
 
 def _summarize(content: str, max_chars: int = 180) -> str:
