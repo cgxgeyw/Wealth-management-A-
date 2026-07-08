@@ -39,6 +39,7 @@ def get_db():
 def init_db() -> None:
     from app.models import agent  # noqa: F401
     from app.models import data_source  # noqa: F401
+    from app.models import knowledge  # noqa: F401
     from app.services.seed import seed_defaults
 
     Base.metadata.create_all(bind=engine)

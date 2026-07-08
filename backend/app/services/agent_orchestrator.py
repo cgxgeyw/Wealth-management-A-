@@ -40,8 +40,6 @@ def create_agent_run(db: Session, payload: AgentRunCreateRequest) -> AgentRunRea
     for agent in agents:
         agent_steps: list[AgentRunStep] = []
         for tool_key in _agent_tools(agent):
-            if tool_key == "knowledge.search":
-                continue
             if tool_key == "document.write" and not payload.include_report:
                 continue
             params = _tool_params(tool_key, symbol, payload, agent_summaries)
@@ -176,6 +174,13 @@ def _tool_params(
         return {"indicator": "cpi", "limit": 12}
     if tool_key == "data.quality":
         return {"log_limit": 500}
+    if tool_key == "knowledge.search":
+        return {
+            "query": payload.query or f"{symbol} 投研资料",
+            "symbols": [symbol],
+            "top_k": 8,
+            "require_citations": True,
+        }
     if tool_key == "document.write":
         return _document_params(symbol, payload, agent_summaries)
     return None

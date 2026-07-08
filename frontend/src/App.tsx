@@ -15,14 +15,17 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createAgentRun,
+  createKnowledgeDocument,
   fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
   fetchHealth,
+  fetchKnowledgeDocuments,
   renderAgentPrompt,
   rollbackAgent,
   runAgentTool,
+  searchKnowledge,
   testRunAgent,
   updateAgent,
   type AgentConfig,
@@ -32,7 +35,9 @@ import {
   type AgentTestRunResponse,
   type AgentToolRunResponse,
   type AgentToolSpec,
-  type HealthResponse
+  type HealthResponse,
+  type KnowledgeDocument,
+  type KnowledgeSearchItem
 } from "./api/client";
 import { DataAnalysisPage } from "./pages/DataAnalysisPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
@@ -521,73 +526,126 @@ function sampleVariableValue(value: string): string {
 }
 
 function KnowledgeBasePage() {
-  const docs = [
-    ["宁德时代 2025 年报", "PDF", "公司财报", "已向量化", "1,248"],
-    ["新能源车产业链跟踪", "Markdown", "行业研究", "已向量化", "386"],
-    ["储能业务深度报告", "Word", "研报", "处理中", "92"],
-    ["监管政策网页摘录", "网页", "政策", "待切分", "0"]
-  ];
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [matches, setMatches] = useState<KnowledgeSearchItem[]>([]);
+  const [docQuery, setDocQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("宁德时代储能业务的增长驱动是什么？");
+  const [title, setTitle] = useState("宁德时代储能业务笔记");
+  const [symbols, setSymbols] = useState("300750");
+  const [tags, setTags] = useState("储能,宁德时代");
+  const [content, setContent] = useState("宁德时代储能系统出货增长。海外大客户订单是主要驱动。\n\n毛利率改善来自原材料成本下降与产品结构优化。");
+  const [message, setMessage] = useState("");
+
+  async function loadDocuments(query = docQuery) {
+    const result = await fetchKnowledgeDocuments(query, 80);
+    setDocuments(result.items);
+  }
+
+  useEffect(() => {
+    loadDocuments("").catch((err: unknown) => {
+      setMessage(err instanceof Error ? err.message : "知识库加载失败");
+    });
+  }, []);
+
+  async function submitDocument() {
+    try {
+      const created = await createKnowledgeDocument({
+        title,
+        content,
+        doc_type: "note",
+        source: "manual",
+        symbols: splitCsv(symbols),
+        tags: splitCsv(tags)
+      });
+      setMessage(`已入库：${created.title}，${created.chunk_count} 个 chunks`);
+      await loadDocuments("");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "文档入库失败");
+    }
+  }
+
+  async function runKnowledgeSearch() {
+    try {
+      const result = await searchKnowledge({
+        query: searchQuery,
+        symbols: splitCsv(symbols),
+        top_k: 8,
+        require_citations: true
+      });
+      setMatches(result.items);
+      setMessage(`检索完成：${result.items.length} 条引用片段`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "检索失败");
+    }
+  }
 
   return (
     <div className="page-grid knowledge-layout">
       <div className="main-column">
+        {message ? <div className="notice">{message}</div> : null}
         <Panel
           title="资料导入"
-          actions={
-            <>
-              <button className="btn btn-primary" type="button">上传文件</button>
-              <button className="btn btn-secondary" type="button">添加网页链接</button>
-              <button className="btn btn-secondary" type="button">粘贴文本</button>
-            </>
-          }
+          description="第一版支持纯文本入库、自动分块、FTS 检索和 citation 返回。PDF/Word 解析后续接入。"
+          actions={<button className="btn btn-primary" onClick={submitDocument} type="button">入库并索引</button>}
         >
-          <div className="upload-row">
-            {["PDF", "Word", "Markdown", "网页链接", "纯文本"].map((item) => (
-              <button className="upload-tile" key={item} type="button"><LibraryBig size={18} />{item}</button>
-            ))}
+          <div className="form-grid">
+            <label>标题<input className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+            <label>股票代码<input className="input mono" value={symbols} onChange={(event) => setSymbols(event.target.value)} /></label>
+            <label>标签<input className="input" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
+            <label>类型<input className="input" value="note" readOnly /></label>
+          </div>
+          <div className="form-stack">
+            <label>正文<textarea className="textarea" value={content} onChange={(event) => setContent(event.target.value)} /></label>
           </div>
         </Panel>
 
         <Panel title="文档库">
           <div className="toolbar">
-            <input className="input" placeholder="搜索标题、标签、来源" />
-            <button className="btn btn-secondary" type="button">标签筛选</button>
-            <button className="btn btn-secondary" type="button">重新向量化</button>
+            <input className="input" placeholder="搜索标题、标签、来源" value={docQuery} onChange={(event) => setDocQuery(event.target.value)} />
+            <button className="btn btn-secondary" onClick={() => loadDocuments(docQuery)} type="button">搜索</button>
+            <button className="btn btn-secondary" onClick={() => loadDocuments("")} type="button">刷新</button>
           </div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>标题</th><th>类型</th><th>标签</th><th>状态</th><th>Chunks</th><th>操作</th></tr></thead>
               <tbody>
-                {docs.map(([title, type, tag, status, chunks]) => (
-                  <tr key={title}>
-                    <td>{title}</td>
-                    <td>{type}</td>
-                    <td><StatusBadge>{tag}</StatusBadge></td>
-                    <td><StatusBadge tone={status === "已向量化" ? "green" : "amber"}>{status}</StatusBadge></td>
-                    <td className="mono">{chunks}</td>
-                    <td><button className="btn btn-table" type="button">查看</button></td>
+                {documents.map((document) => (
+                  <tr key={document.id}>
+                    <td>{document.title}</td>
+                    <td>{document.doc_type}</td>
+                    <td><StatusBadge>{document.tags.join(",") || "未标注"}</StatusBadge></td>
+                    <td><StatusBadge tone={document.status === "indexed" ? "green" : "amber"}>{document.status}</StatusBadge></td>
+                    <td className="mono">{document.chunk_count}</td>
+                    <td><button className="btn btn-table" onClick={() => setSearchQuery(document.title)} type="button">检索</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {documents.length === 0 ? <div className="empty-hint">暂无文档，先粘贴文本入库</div> : null}
           </div>
         </Panel>
       </div>
 
       <Panel title="检索测试">
-        <textarea className="textarea" defaultValue="宁德时代储能业务的增长驱动是什么？" />
-        <button className="btn btn-primary full" type="button">运行检索</button>
+        <textarea className="textarea" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+        <button className="btn btn-primary full" onClick={runKnowledgeSearch} type="button">运行检索</button>
         <div className="match-list">
-          {["储能系统出货同比提升，海外大客户订单贡献主要增量。", "毛利率改善来自原材料成本下降与产品结构优化。", "风险集中在海外政策、汇率与交付节奏。"].map((text, index) => (
-            <div className="match" key={text}>
-              <StatusBadge tone="green">相似度 {(0.86 - index * 0.05).toFixed(2)}</StatusBadge>
-              <p>{text}</p>
+          {matches.map((item) => (
+            <div className="match" key={item.citation}>
+              <StatusBadge tone="green">score {item.score.toFixed(2)}</StatusBadge>
+              <p>{item.snippet}</p>
+              <small className="mono">{item.citation} · {item.title}</small>
             </div>
           ))}
+          {matches.length === 0 ? <div className="empty-hint">检索结果会显示 citation，可被 Agent 引用</div> : null}
         </div>
       </Panel>
     </div>
   );
+}
+
+function splitCsv(value: string): string[] {
+  return value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
 }
 
 function TasksReportsPage() {

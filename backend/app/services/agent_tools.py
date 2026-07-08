@@ -11,6 +11,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.models.data_source import DataFetchLog, DataProvider
+from app.schemas.knowledge import KnowledgeSearchRequest
 from app.services.data_fetcher import (
     DataFetchError,
     get_announcements,
@@ -28,6 +29,7 @@ from app.services.data_fetcher import (
     get_research_reports,
     get_sector_snapshots,
 )
+from app.services.knowledge_base import search_knowledge
 from app.services.stock_catalog import get_stock_profile
 from app.services.technical_indicators import calculate_indicators
 
@@ -257,7 +259,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "knowledge.search": ToolSpec(
         key="knowledge.search",
         name="知识库检索",
-        description="预留给专业 RAG 系统的检索入口，后续接入索引、召回、重排和引用追踪。",
+        description="检索专业 RAG 知识库，返回带 citation 的引用片段。",
         category="knowledge",
         input_schema={
             "type": "object",
@@ -265,7 +267,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "properties": {"query": _text_schema("检索问题")},
         },
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
 }
 
@@ -553,6 +555,19 @@ def _macro_indicator_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]
     return _model_to_dict(data)
 
 
+def _knowledge_search_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    query = _require_text(params, "query")
+    payload = KnowledgeSearchRequest(
+        query=query,
+        symbols=_string_list(params.get("symbols")),
+        doc_types=_string_list(params.get("doc_types")),
+        tags=_string_list(params.get("tags")),
+        top_k=_int_param(params, "top_k", 8, 1, 50),
+        require_citations=bool(params.get("require_citations", True)),
+    )
+    return search_knowledge(db, payload).model_dump(mode="json")
+
+
 def _write_document(_: Session, params: dict[str, Any]) -> dict[str, Any]:
     title = _require_text(params, "title")
     topic = _require_text(params, "topic")
@@ -621,5 +636,6 @@ _HANDLERS: dict[str, ToolHandler] = {
     "data.quality": _data_quality_tool,
     "sector.snapshots": _sector_snapshots_tool,
     "market.macro": _macro_indicator_tool,
+    "knowledge.search": _knowledge_search_tool,
     "document.write": _write_document,
 }

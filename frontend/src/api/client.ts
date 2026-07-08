@@ -150,6 +150,71 @@ export interface AgentRunCreatePayload {
   include_report?: boolean;
 }
 
+export interface KnowledgeDocument {
+  id: number;
+  title: string;
+  doc_type: string;
+  source: string;
+  summary: string;
+  symbols: string[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+  status: string;
+  enabled: boolean;
+  chunk_count: number;
+  published_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  content: string;
+  chunks: Array<{
+    id: number;
+    document_id: number;
+    chunk_index: number;
+    content: string;
+    summary: string;
+    token_count: number;
+    metadata: Record<string, unknown>;
+  }>;
+}
+
+export interface KnowledgeDocumentListResponse {
+  items: KnowledgeDocument[];
+}
+
+export interface KnowledgeDocumentCreatePayload {
+  title: string;
+  content: string;
+  doc_type?: string;
+  source?: string;
+  symbols?: string[];
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  published_at?: string;
+  enabled?: boolean;
+}
+
+export interface KnowledgeSearchItem {
+  chunk_id: number;
+  document_id: number;
+  title: string;
+  snippet: string;
+  score: number;
+  source: string;
+  doc_type: string;
+  symbols: string[];
+  tags: string[];
+  citation: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface KnowledgeSearchResponse {
+  query: string;
+  items: KnowledgeSearchItem[];
+}
+
 export interface DataProvider {
   id: number;
   key: string;
@@ -666,6 +731,26 @@ export function fetchAgentRuns(limit = 20): Promise<AgentRunListResponse> {
 
 export function fetchAgentRun(runKey: string): Promise<AgentRun> {
   return getJson<AgentRun>(`/api/agent-runs/${encodeURIComponent(runKey)}`);
+}
+
+export function fetchKnowledgeDocuments(q = "", limit = 50): Promise<KnowledgeDocumentListResponse> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return getJson<KnowledgeDocumentListResponse>(`/api/knowledge/documents?${params}`);
+}
+
+export function createKnowledgeDocument(payload: KnowledgeDocumentCreatePayload): Promise<KnowledgeDocumentDetail> {
+  return postJson<KnowledgeDocumentDetail>("/api/knowledge/documents", payload);
+}
+
+export function searchKnowledge(payload: {
+  query: string;
+  symbols?: string[];
+  doc_types?: string[];
+  tags?: string[];
+  top_k?: number;
+  require_citations?: boolean;
+}): Promise<KnowledgeSearchResponse> {
+  return postJson<KnowledgeSearchResponse>("/api/knowledge/search", payload);
 }
 
 export function fetchDataProviders(): Promise<DataProviderListResponse> {
