@@ -9,6 +9,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
     KnowledgeFaissStatus,
+    KnowledgeReindexAllResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
 )
@@ -17,6 +18,7 @@ from app.services.knowledge_base import (
     delete_document,
     get_document,
     list_documents,
+    reindex_all_documents,
     reindex_document,
     search_knowledge,
     update_document,
@@ -37,6 +39,11 @@ def create_knowledge_document(
     db: Session = Depends(get_db),
 ) -> KnowledgeDocumentDetail:
     return create_document(db, payload)
+
+
+@router.post("/documents/reindex-all", response_model=KnowledgeReindexAllResponse)
+def reindex_all(db: Session = Depends(get_db)) -> KnowledgeReindexAllResponse:
+    return reindex_all_documents(db)
 
 
 @router.get("/documents/{document_id}", response_model=KnowledgeDocumentDetail)

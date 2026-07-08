@@ -339,6 +339,18 @@ button {
   font-size: 12px;
 }
 
+.btn-table.danger:hover {
+  border-color: #f1bbb5;
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
 .row-handle,
 .row-delete {
   width: 24px;
@@ -660,6 +672,10 @@ tbody tr:hover,
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.form-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .input,
 .textarea {
   width: 100%;
@@ -685,6 +701,36 @@ tbody tr:hover,
 .input:focus,
 .textarea:focus {
   border-color: var(--ink);
+}
+
+.document-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.chunk-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 0 12px 12px;
+}
+
+.chunk-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--panel);
+}
+
+.chunk-item p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .search-row,

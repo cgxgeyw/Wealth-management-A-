@@ -16,13 +16,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createAgentRun,
   createKnowledgeDocument,
+  deleteKnowledgeDocument,
   fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
   fetchHealth,
+  fetchKnowledgeDocument,
   fetchKnowledgeFaissStatus,
   fetchKnowledgeDocuments,
+  reindexAllKnowledgeDocuments,
+  reindexKnowledgeDocument,
   rebuildKnowledgeFaissIndex,
   renderAgentPrompt,
   rollbackAgent,
@@ -39,6 +43,7 @@ import {
   type AgentToolSpec,
   type HealthResponse,
   type KnowledgeDocument,
+  type KnowledgeDocumentDetail,
   type KnowledgeFaissStatus,
   type KnowledgeSearchItem
 } from "./api/client";
@@ -530,16 +535,21 @@ function sampleVariableValue(value: string): string {
 
 function KnowledgeBasePage() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
   const [matches, setMatches] = useState<KnowledgeSearchItem[]>([]);
   const [faissStatus, setFaissStatus] = useState<KnowledgeFaissStatus | null>(null);
   const [docQuery, setDocQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("宁德时代储能业务的增长驱动是什么？");
+  const [searchDocTypes, setSearchDocTypes] = useState("");
+  const [searchTags, setSearchTags] = useState("");
+  const [searchTopK, setSearchTopK] = useState(8);
   const [title, setTitle] = useState("宁德时代储能业务笔记");
   const [symbols, setSymbols] = useState("300750");
   const [tags, setTags] = useState("储能,宁德时代");
   const [content, setContent] = useState("宁德时代储能系统出货增长。海外大客户订单是主要驱动。\n\n毛利率改善来自原材料成本下降与产品结构优化。");
   const [message, setMessage] = useState("");
   const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
+  const [reindexingAll, setReindexingAll] = useState(false);
 
   async function loadDocuments(query = docQuery) {
     const result = await fetchKnowledgeDocuments(query, 80);
@@ -568,6 +578,7 @@ function KnowledgeBasePage() {
         tags: splitCsv(tags)
       });
       setMessage(`已入库：${created.title}，${created.chunk_count} 个 chunks`);
+      setSelectedDocument(created);
       await loadDocuments("");
       await loadFaissStatus();
     } catch (err) {
@@ -588,12 +599,67 @@ function KnowledgeBasePage() {
     }
   }
 
+  async function reindexAllDocuments() {
+    setReindexingAll(true);
+    try {
+      const result = await reindexAllKnowledgeDocuments();
+      setFaissStatus(result.faiss);
+      setMessage(`全量重建完成：${result.reindexed}/${result.total} 篇，失败 ${result.failed} 篇`);
+      await loadDocuments(docQuery);
+      if (selectedDocument) {
+        setSelectedDocument(await fetchKnowledgeDocument(selectedDocument.id));
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "全量重建失败");
+    } finally {
+      setReindexingAll(false);
+    }
+  }
+
+  async function openDocument(documentId: number) {
+    try {
+      const detail = await fetchKnowledgeDocument(documentId);
+      setSelectedDocument(detail);
+      setMessage(`已打开：${detail.title}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "文档详情加载失败");
+    }
+  }
+
+  async function reindexSingleDocument(documentId: number) {
+    try {
+      const detail = await reindexKnowledgeDocument(documentId);
+      setSelectedDocument(detail);
+      setMessage(`已重建：${detail.title}，${detail.chunk_count} 个 chunks`);
+      await loadDocuments(docQuery);
+      await loadFaissStatus();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "文档重建失败");
+    }
+  }
+
+  async function removeDocument(documentId: number) {
+    try {
+      const removed = await deleteKnowledgeDocument(documentId);
+      if (selectedDocument?.id === documentId) {
+        setSelectedDocument(null);
+      }
+      setMessage(`已删除：${removed.title}`);
+      await loadDocuments(docQuery);
+      await loadFaissStatus();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "文档删除失败");
+    }
+  }
+
   async function runKnowledgeSearch() {
     try {
       const result = await searchKnowledge({
         query: searchQuery,
         symbols: splitCsv(symbols),
-        top_k: 8,
+        doc_types: splitCsv(searchDocTypes),
+        tags: splitCsv(searchTags),
+        top_k: searchTopK,
         require_citations: true
       });
       setMatches(result.items);
@@ -623,7 +689,14 @@ function KnowledgeBasePage() {
           </div>
         </Panel>
 
-        <Panel title="文档库">
+        <Panel
+          title="文档库"
+          actions={
+            <button className="btn btn-secondary" disabled={reindexingAll} onClick={reindexAllDocuments} type="button">
+              {reindexingAll ? "重建中..." : "全量重建"}
+            </button>
+          }
+        >
           <div className="toolbar">
             <input className="input" placeholder="搜索标题、标签、来源" value={docQuery} onChange={(event) => setDocQuery(event.target.value)} />
             <button className="btn btn-secondary" onClick={() => loadDocuments(docQuery)} type="button">搜索</button>
@@ -640,13 +713,49 @@ function KnowledgeBasePage() {
                     <td><StatusBadge>{document.tags.join(",") || "未标注"}</StatusBadge></td>
                     <td><StatusBadge tone={document.status === "indexed" ? "green" : "amber"}>{document.status}</StatusBadge></td>
                     <td className="mono">{document.chunk_count}</td>
-                    <td><button className="btn btn-table" onClick={() => setSearchQuery(document.title)} type="button">检索</button></td>
+                    <td>
+                      <div className="row-actions">
+                        <button className="btn btn-table" onClick={() => setSearchQuery(document.title)} type="button">检索</button>
+                        <button className="btn btn-table" onClick={() => openDocument(document.id)} type="button">详情</button>
+                        <button className="btn btn-table" onClick={() => reindexSingleDocument(document.id)} type="button">重建</button>
+                        <button className="btn btn-table danger" onClick={() => removeDocument(document.id)} type="button">删除</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {documents.length === 0 ? <div className="empty-hint">暂无文档，先粘贴文本入库</div> : null}
           </div>
+        </Panel>
+
+        <Panel title="文档详情">
+          {selectedDocument ? (
+            <div className="document-detail">
+              <div className="report-block">
+                <div>
+                  <span className="label">{selectedDocument.doc_type} · {selectedDocument.source}</span>
+                  <h3>{selectedDocument.title}</h3>
+                  <p>{selectedDocument.summary || "暂无摘要"}</p>
+                </div>
+                <StatusBadge tone={selectedDocument.enabled ? "green" : "amber"}>
+                  {selectedDocument.enabled ? "enabled" : "disabled"}
+                </StatusBadge>
+              </div>
+              <div className="reference-list">
+                {selectedDocument.symbols.map((item) => <button key={item} type="button">{item}</button>)}
+                {selectedDocument.tags.map((item) => <button key={item} type="button">{item}</button>)}
+              </div>
+              <div className="chunk-list">
+                {selectedDocument.chunks.map((chunk) => (
+                  <div className="chunk-item" key={chunk.id}>
+                    <strong className="mono">chunk:{chunk.id} · {chunk.token_count} tokens</strong>
+                    <p>{chunk.content}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="empty-hint">选择一篇文档查看正文分块和 citation 来源</div>}
         </Panel>
       </div>
 
@@ -679,6 +788,12 @@ function KnowledgeBasePage() {
 
         <Panel title="检索测试">
           <textarea className="textarea" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+          <div className="form-grid compact">
+            <label>股票代码<input className="input mono" value={symbols} onChange={(event) => setSymbols(event.target.value)} /></label>
+            <label>文档类型<input className="input" placeholder="note,research" value={searchDocTypes} onChange={(event) => setSearchDocTypes(event.target.value)} /></label>
+            <label>标签<input className="input" placeholder="储能,风控" value={searchTags} onChange={(event) => setSearchTags(event.target.value)} /></label>
+            <label>Top K<input className="input mono" min={1} max={50} type="number" value={searchTopK} onChange={(event) => setSearchTopK(Number(event.target.value) || 8)} /></label>
+          </div>
           <button className="btn btn-primary full" onClick={runKnowledgeSearch} type="button">运行检索</button>
           <div className="match-list">
             {matches.map((item) => (

@@ -130,3 +130,40 @@ def test_knowledge_vector_search_can_hydrate_faiss_hits(monkeypatch) -> None:
     assert items
     assert items[0]["chunk_id"] == chunk_id
     assert items[0]["title"] == "电网侧储能调研"
+
+
+def test_knowledge_maintenance_detail_reindex_all_and_delete(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/knowledge/documents",
+            json={
+                "title": "交易纪律",
+                "doc_type": "strategy",
+                "source": "manual",
+                "content": "单笔亏损不得超过计划阈值。连续亏损后降低仓位。",
+                "symbols": [],
+                "tags": ["风控"],
+            },
+        )
+        assert created.status_code == 200
+        document_id = created.json()["id"]
+
+        detail = client.get(f"/api/knowledge/documents/{document_id}")
+        assert detail.status_code == 200
+        assert detail.json()["chunks"]
+
+        reindexed = client.post("/api/knowledge/documents/reindex-all")
+        assert reindexed.status_code == 200
+        reindex_payload = reindexed.json()
+        assert reindex_payload["total"] >= 1
+        assert reindex_payload["reindexed"] >= 1
+        assert "faiss" in reindex_payload
+
+        deleted = client.delete(f"/api/knowledge/documents/{document_id}")
+        assert deleted.status_code == 200
+        assert deleted.json()["id"] == document_id
+
+        missing = client.get(f"/api/knowledge/documents/{document_id}")
+        assert missing.status_code == 404

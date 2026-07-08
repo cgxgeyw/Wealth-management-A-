@@ -16,11 +16,13 @@ from app.schemas.knowledge import (
     KnowledgeDocumentDetail,
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
+    KnowledgeReindexAllResponse,
     KnowledgeSearchItem,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
 )
 from app.services.embedding_client import EmbeddingError, embed_texts
+from app.services.knowledge_faiss import rebuild_faiss_index
 from app.services.knowledge_faiss import search_faiss
 
 
@@ -56,6 +58,7 @@ def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> Kno
     _replace_chunks(db, document)
     db.commit()
     db.refresh(document)
+    rebuild_faiss_index(db)
     return document_detail(db, document)
 
 
@@ -115,6 +118,7 @@ def delete_document(db: Session, document_id: int) -> bool:
     db.execute(text("DELETE FROM knowledge_chunks_fts WHERE document_id = :document_id"), {"document_id": document_id})
     db.delete(document)
     db.commit()
+    rebuild_faiss_index(db)
     return True
 
 
@@ -128,7 +132,34 @@ def reindex_document(db: Session, document_id: int) -> KnowledgeDocumentDetail |
     db.add(document)
     db.commit()
     db.refresh(document)
+    rebuild_faiss_index(db)
     return document_detail(db, document)
+
+
+def reindex_all_documents(db: Session) -> KnowledgeReindexAllResponse:
+    ensure_knowledge_fts(db)
+    documents = db.scalars(select(KnowledgeDocument).order_by(KnowledgeDocument.id)).all()
+    reindexed = 0
+    failed = 0
+    for document in documents:
+        try:
+            _replace_chunks(db, document)
+            document.status = "indexed"
+            db.add(document)
+            db.commit()
+            db.refresh(document)
+            reindexed += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+            ensure_knowledge_fts(db)
+    faiss = rebuild_faiss_index(db)
+    return KnowledgeReindexAllResponse(
+        total=len(documents),
+        reindexed=reindexed,
+        failed=failed,
+        faiss=faiss,
+    )
 
 
 def search_knowledge(db: Session, payload: KnowledgeSearchRequest) -> KnowledgeSearchResponse:

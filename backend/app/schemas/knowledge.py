@@ -101,3 +101,10 @@ class KnowledgeFaissStatus(BaseModel):
     index_path: str = ""
     mapping_path: str = ""
     message: str = ""
+
+
+class KnowledgeReindexAllResponse(BaseModel):
+    total: int
+    reindexed: int
+    failed: int
+    faiss: KnowledgeFaissStatus

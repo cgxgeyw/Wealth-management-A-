@@ -227,6 +227,13 @@ export interface KnowledgeFaissStatus {
   message: string;
 }
 
+export interface KnowledgeReindexAllResponse {
+  total: number;
+  reindexed: number;
+  failed: number;
+  faiss: KnowledgeFaissStatus;
+}
+
 export interface DataProvider {
   id: number;
   key: string;
@@ -676,6 +683,14 @@ async function patchJson<T>(url: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function deleteJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 export function fetchHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>("/api/health");
 }
@@ -750,8 +765,24 @@ export function fetchKnowledgeDocuments(q = "", limit = 50): Promise<KnowledgeDo
   return getJson<KnowledgeDocumentListResponse>(`/api/knowledge/documents?${params}`);
 }
 
+export function fetchKnowledgeDocument(documentId: number): Promise<KnowledgeDocumentDetail> {
+  return getJson<KnowledgeDocumentDetail>(`/api/knowledge/documents/${documentId}`);
+}
+
 export function createKnowledgeDocument(payload: KnowledgeDocumentCreatePayload): Promise<KnowledgeDocumentDetail> {
   return postJson<KnowledgeDocumentDetail>("/api/knowledge/documents", payload);
+}
+
+export function deleteKnowledgeDocument(documentId: number): Promise<KnowledgeDocument> {
+  return deleteJson<KnowledgeDocument>(`/api/knowledge/documents/${documentId}`);
+}
+
+export function reindexKnowledgeDocument(documentId: number): Promise<KnowledgeDocumentDetail> {
+  return postJson<KnowledgeDocumentDetail>(`/api/knowledge/documents/${documentId}/reindex`, {});
+}
+
+export function reindexAllKnowledgeDocuments(): Promise<KnowledgeReindexAllResponse> {
+  return postJson<KnowledgeReindexAllResponse>("/api/knowledge/documents/reindex-all", {});
 }
 
 export function searchKnowledge(payload: {
