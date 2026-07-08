@@ -14,6 +14,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  createAgentRun,
+  fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
@@ -26,6 +28,7 @@ import {
   type AgentConfig,
   type AgentPromptVersion,
   type AgentRenderResponse,
+  type AgentRun,
   type AgentTestRunResponse,
   type AgentToolRunResponse,
   type AgentToolSpec,
@@ -125,15 +128,60 @@ function Panel({
 }
 
 function ChatAnalysisPage() {
-  const stages = ["数据获取", "技术面", "新闻", "多方", "空方", "风控", "综合"];
+  const [symbol, setSymbol] = useState("300750");
+  const [query, setQuery] = useState("分析 300750，给我一个 2 周交易视角。");
+  const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [message, setMessage] = useState("");
+  const [running, setRunning] = useState(false);
+
+  async function loadRuns() {
+    const result = await fetchAgentRuns(8);
+    setRuns(result.items);
+    setLatestRun((current) => current ?? result.items[0] ?? null);
+  }
+
+  useEffect(() => {
+    loadRuns().catch((err: unknown) => {
+      setMessage(err instanceof Error ? err.message : "运行记录加载失败");
+    });
+  }, []);
+
+  async function startRun(includeReport = false) {
+    setRunning(true);
+    setMessage("");
+    try {
+      const result = await createAgentRun({
+        symbol,
+        query,
+        mode: "analysis",
+        period: "daily",
+        limit: 60,
+        include_report: includeReport
+      });
+      setLatestRun(result);
+      await loadRuns();
+      setMessage("Agent 编排完成");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Agent 编排失败");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const stageNames = latestRun?.result.agent_summaries instanceof Array
+    ? latestRun.result.agent_summaries.map((item) => String((item as Record<string, unknown>).agent_name ?? "Agent"))
+    : ["数据获取", "技术面", "新闻", "基本面", "资金", "风控", "综合"];
+  const confidence = Number(latestRun?.result.confidence ?? 0);
 
   return (
     <div className="chat-layout">
       <Panel title="会话列表" className="conversation-panel">
-        {["300750 宁德时代", "600519 贵州茅台", "002475 立讯精密", "上证指数复盘"].map((item, index) => (
-          <button className={`conversation ${index === 0 ? "active" : ""}`} key={item} type="button">
-            <strong>{item}</strong>
-            <span>{index === 0 ? "综合研讨进行中" : "已生成阶段结论"}</span>
+        {runs.length === 0 ? <div className="empty-hint">暂无运行记录</div> : null}
+        {runs.map((item) => (
+          <button className={`conversation ${latestRun?.run_key === item.run_key ? "active" : ""}`} key={item.run_key} onClick={() => setLatestRun(item)} type="button">
+            <strong>{item.symbol} {item.mode}</strong>
+            <span>{item.status} · {formatDateTime(item.created_at)}</span>
           </button>
         ))}
       </Panel>
@@ -142,48 +190,53 @@ function ChatAnalysisPage() {
         title="投研对话"
         actions={
           <>
-            <button className="btn btn-secondary" type="button">重跑</button>
-            <button className="btn btn-secondary" type="button">导出</button>
-            <button className="btn btn-primary" type="button">生成报告</button>
+            <button className="btn btn-secondary" disabled={running} onClick={() => startRun(false)} type="button">重跑</button>
+            <button className="btn btn-secondary" disabled={!latestRun} type="button">导出</button>
+            <button className="btn btn-primary" disabled={running} onClick={() => startRun(true)} type="button">生成报告</button>
           </>
         }
       >
+        {message ? <div className="notice">{message}</div> : null}
         <div className="stage-strip">
-          {stages.map((stage, index) => (
-            <div className={index < 5 ? "stage done" : index === 5 ? "stage active" : "stage"} key={stage}>
+          {stageNames.map((stage, index) => (
+            <div className={latestRun ? "stage done" : index === 0 ? "stage active" : "stage"} key={`${stage}-${index}`}>
               <span>{index + 1}</span>
               <strong>{stage}</strong>
             </div>
           ))}
         </div>
         <div className="message-list">
-          <div className="msg user">分析 300750，给我一个 2 周交易视角。</div>
-          <div className="msg agent"><strong>数据管家</strong><p>已获取日 K、分时、资金流、新闻公告和最近研报摘要。</p></div>
-          <div className="msg agent"><strong>技术面 Agent</strong><p>价格站回 20 日均线，量能较前 5 日放大。短线结构偏修复。</p></div>
-          <div className="msg agent muted"><strong>风控 Agent</strong><p>正在检查回撤阈值、事件风险和数据一致性。</p></div>
+          <div className="msg user">{latestRun?.query || query}</div>
+          {latestRun?.steps.map((step) => (
+            <div className={step.status === "success" ? "msg agent" : "msg agent muted"} key={`${step.agent_key}-${step.tool_key}`}>
+              <strong>{step.agent_name} · {step.tool_key}</strong>
+              <p>{step.status === "success" ? String(step.output_preview.summary ?? "已获取数据") : step.error}</p>
+            </div>
+          ))}
+          {!latestRun ? <div className="msg agent muted"><strong>Agent 编排</strong><p>输入标的和问题后，系统会按 Agent 工具权限执行真实工具并生成可追踪结果。</p></div> : null}
         </div>
         <div className="conclusion">
-          <div><span className="label">结构化结论</span><strong>谨慎偏多，等待放量确认</strong></div>
-          <StatusBadge tone="green">置信度 72%</StatusBadge>
-          <p>核心证据来自趋势修复、资金回流和行业新闻改善。主要风险是板块估值修复后的短线波动。</p>
+          <div><span className="label">结构化结论</span><strong>{String(latestRun?.result.conclusion ?? "等待运行 Agent 编排")}</strong></div>
+          <StatusBadge tone={confidence >= 80 ? "green" : confidence >= 50 ? "amber" : "red"}>置信度 {confidence}%</StatusBadge>
+          <p>成功工具 {String(latestRun?.result.tool_success_count ?? 0)} 个，失败工具 {String(latestRun?.result.tool_failed_count ?? 0)} 个。当前结论来自工具编排层，模型研讨层待接入。</p>
         </div>
         <div className="composer">
-          <input className="input" placeholder="继续追问，例如：请空方 Agent 反驳这个结论" />
-          <button className="btn btn-primary" type="button">发送</button>
+          <input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
+          <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="继续追问，例如：请空方 Agent 反驳这个结论" />
+          <button className="btn btn-primary" disabled={running} onClick={() => startRun(false)} type="button">{running ? "运行中" : "发送"}</button>
         </div>
       </Panel>
 
       <Panel title="上下文与引用">
         <div className="kv-list">
-          <div><span>股票</span><strong>300750 宁德时代</strong></div>
-          <div><span>快照</span><strong>行情、K 线、新闻</strong></div>
-          <div><span>数据源</span><strong>tencent, eastmoney, sina, cls</strong></div>
+          <div><span>股票</span><strong>{latestRun?.symbol ?? symbol}</strong></div>
+          <div><span>运行编号</span><strong className="mono">{latestRun?.run_key ?? "未创建"}</strong></div>
+          <div><span>状态</span><strong>{latestRun?.status ?? "idle"}</strong></div>
         </div>
         <div className="reference-list">
-          <button type="button">行情快照 #Q-300750</button>
-          <button type="button">K 线序列 #K-DAILY</button>
-          <button type="button">新闻快讯 #CLS</button>
-          <button type="button">技术指标 #TA</button>
+          {latestRun?.steps.map((step) => (
+            <button key={`${step.agent_key}-${step.tool_key}-ref`} type="button">{step.tool_key} · {step.status}</button>
+          )) ?? <button type="button">暂无引用</button>}
         </div>
       </Panel>
     </div>
@@ -522,63 +575,99 @@ function KnowledgeBasePage() {
 }
 
 function TasksReportsPage() {
-  const tasks = [
-    ["T-20260707-001", "300750", "综合分析", "running_agents", "12:40", "02:18"],
-    ["T-20260707-002", "600519", "快速扫描", "completed", "11:05", "04:44"],
-    ["T-20260707-003", "002475", "新闻风险", "risk_reviewing", "10:21", "03:12"],
-    ["T-20260707-004", "000001", "指数复盘", "failed", "09:32", "00:41"]
-  ];
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function loadRuns() {
+    const result = await fetchAgentRuns(30);
+    setRuns(result.items);
+    setSelectedRun((current) => current ?? result.items[0] ?? null);
+  }
+
+  useEffect(() => {
+    loadRuns().catch((err: unknown) => {
+      setMessage(err instanceof Error ? err.message : "任务加载失败");
+    });
+  }, []);
 
   return (
     <div className="page-grid reports-layout">
       <div className="main-column">
-        <Panel title="任务队列" actions={<button className="btn btn-primary" type="button">新建任务</button>}>
+        {message ? <div className="notice">{message}</div> : null}
+        <Panel title="任务队列" actions={<button className="btn btn-primary" onClick={loadRuns} type="button">刷新</button>}>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>ID</th><th>标的</th><th>模式</th><th>状态</th><th>创建时间</th><th>耗时</th><th>快照</th></tr></thead>
+              <thead><tr><th>ID</th><th>标的</th><th>模式</th><th>状态</th><th>创建时间</th><th>步骤</th><th>快照</th></tr></thead>
               <tbody>
-                {tasks.map(([id, stock, mode, status, created, duration]) => (
-                  <tr key={id}>
-                    <td className="mono">{id}</td>
-                    <td>{stock}</td>
-                    <td>{mode}</td>
-                    <td><StatusBadge tone={status === "completed" ? "green" : status === "failed" ? "red" : "amber"}>{status}</StatusBadge></td>
-                    <td>{created}</td>
-                    <td className="mono">{duration}</td>
-                    <td><button className="btn btn-table" type="button">打开</button></td>
+                {runs.map((run) => (
+                  <tr key={run.run_key}>
+                    <td className="mono">{run.run_key}</td>
+                    <td>{run.symbol}</td>
+                    <td>{run.mode}</td>
+                    <td><StatusBadge tone={run.status === "completed" ? "green" : run.status === "partial" ? "amber" : "red"}>{run.status}</StatusBadge></td>
+                    <td>{formatDateTime(run.created_at)}</td>
+                    <td className="mono">{run.steps.length}</td>
+                    <td><button className="btn btn-table" onClick={() => setSelectedRun(run)} type="button">打开</button></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {runs.length === 0 ? <div className="empty-hint">暂无 Agent 运行记录</div> : null}
           </div>
         </Panel>
 
         <Panel title="报告详情">
-          <div className="report-block">
-            <div>
-              <span className="label">最终结论</span>
-              <h3>宁德时代：谨慎偏多，等待量能确认后提高仓位</h3>
-              <p>投研总监综合技术面、新闻、资金与风险 Agent 输出，建议关注 20 日均线支撑和板块资金持续性。</p>
-            </div>
-            <StatusBadge tone="green">置信度 72%</StatusBadge>
-          </div>
+          {selectedRun ? (
+            <>
+              <div className="report-block">
+                <div>
+                  <span className="label">最终结论</span>
+                  <h3>{selectedRun.symbol}：{String(selectedRun.result.conclusion ?? "工具编排完成")}</h3>
+                  <p>成功工具 {String(selectedRun.result.tool_success_count ?? 0)} 个，失败工具 {String(selectedRun.result.tool_failed_count ?? 0)} 个。运行编号 {selectedRun.run_key}。</p>
+                </div>
+                <StatusBadge tone={Number(selectedRun.result.confidence ?? 0) >= 80 ? "green" : "amber"}>置信度 {String(selectedRun.result.confidence ?? 0)}%</StatusBadge>
+              </div>
+              <div className="reference-list">
+                {selectedRun.steps.map((step) => (
+                  <button key={`${selectedRun.run_key}-${step.agent_key}-${step.tool_key}`} type="button">
+                    {step.agent_name} · {step.tool_key} · {step.status}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : <div className="empty-hint">选择一个运行记录查看详情</div>}
         </Panel>
       </div>
 
       <Panel title="报告归档">
-        {["300750 综合报告", "600519 财报跟踪", "002475 新闻风险简报"].map((item, index) => (
-          <div className="archive-row" key={item}>
-            <strong>{item}</strong>
-            <span>2026-07-0{7 - index} · {index === 0 ? "谨慎偏多" : "中性观察"}</span>
+        {runs.slice(0, 8).map((item) => (
+          <div className="archive-row" key={item.run_key}>
+            <strong>{item.symbol} {item.mode}</strong>
+            <span>{formatDateTime(item.created_at)} · {item.status}</span>
             <div>
               <button className="btn btn-secondary" type="button">Markdown</button>
               <button className="btn btn-secondary" type="button">PDF</button>
             </div>
           </div>
         ))}
+        {runs.length === 0 ? <div className="empty-hint">生成报告后会出现在这里</div> : null}
       </Panel>
     </div>
   );
+}
+
+function formatDateTime(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function SettingsPage() {

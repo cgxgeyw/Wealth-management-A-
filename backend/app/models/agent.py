@@ -43,3 +43,21 @@ class AgentPromptVersion(Base):
     tools_json: Mapped[str] = mapped_column(Text, default="[]")
     change_note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(40), default="", index=True)
+    query: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(80), default="analysis")
+    status: Mapped[str] = mapped_column(String(40), default="created")
+    agent_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    steps_json: Mapped[str] = mapped_column(Text, default="[]")
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

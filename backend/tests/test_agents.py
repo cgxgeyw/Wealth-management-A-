@@ -464,3 +464,49 @@ def test_agent_macro_and_quality_tools_execute_with_permissions(monkeypatch) -> 
     assert sectors.json()["output"]["items"][0]["name"] == "电池"
     assert macro.status_code == 200
     assert macro.json()["output"]["items"][0]["values"]["value"] == 1.5
+
+
+def test_agent_run_orchestrates_allowed_tools(monkeypatch) -> None:
+    def fake_execute_tool(db, tool_key: str, params: dict) -> dict:
+        if tool_key == "stock.quote":
+            return {"symbol": params["symbol"], "price": 300.5, "provider_key": "pytest"}
+        if tool_key == "stock.indicators":
+            return {"symbol": params["symbol"], "items": [{"name": "MACD", "values": [0.1, 0.2]}]}
+        return {"ok": True}
+
+    monkeypatch.setattr("app.services.agent_orchestrator.execute_tool", fake_execute_tool)
+
+    with TestClient(app) as client:
+        client.patch(
+            "/api/agents/technical",
+            json={
+                "tools": ["stock.quote", "stock.indicators"],
+                "change_note": "orchestration test tools",
+            },
+        )
+        created = client.post(
+            "/api/agent-runs",
+            json={
+                "symbol": "300750",
+                "query": "测试技术面工具编排",
+                "agent_keys": ["technical"],
+                "period": "daily",
+                "limit": 30,
+            },
+        )
+
+        assert created.status_code == 200
+        body = created.json()
+        run_key = body["run_key"]
+        listed = client.get("/api/agent-runs")
+        fetched = client.get(f"/api/agent-runs/{run_key}")
+
+    assert body["status"] == "completed"
+    assert body["symbol"] == "300750"
+    assert body["agent_keys"] == ["technical"]
+    assert [step["tool_key"] for step in body["steps"]] == ["stock.quote", "stock.indicators"]
+    assert body["result"]["tool_success_count"] == 2
+    assert listed.status_code == 200
+    assert any(item["run_key"] == run_key for item in listed.json()["items"])
+    assert fetched.status_code == 200
+    assert fetched.json()["run_key"] == run_key

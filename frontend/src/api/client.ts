@@ -111,6 +111,45 @@ export interface AgentToolRunResponse {
   metadata: Record<string, unknown>;
 }
 
+export interface AgentRunStep {
+  agent_key: string;
+  agent_name: string;
+  tool_key: string;
+  status: string;
+  params: Record<string, unknown>;
+  output_preview: Record<string, unknown>;
+  error: string;
+}
+
+export interface AgentRun {
+  id: number;
+  run_key: string;
+  symbol: string;
+  query: string;
+  mode: string;
+  status: string;
+  agent_keys: string[];
+  steps: AgentRunStep[];
+  result: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentRunListResponse {
+  items: AgentRun[];
+}
+
+export interface AgentRunCreatePayload {
+  symbol: string;
+  query?: string;
+  mode?: string;
+  agent_keys?: string[];
+  variables?: Record<string, string>;
+  period?: string;
+  limit?: number;
+  include_report?: boolean;
+}
+
 export interface DataProvider {
   id: number;
   key: string;
@@ -615,6 +654,18 @@ export function runAgentTool(
     `/api/agent-tools/${encodeURIComponent(agentKey)}/${encodeURIComponent(toolKey)}/run`,
     { params }
   );
+}
+
+export function createAgentRun(payload: AgentRunCreatePayload): Promise<AgentRun> {
+  return postJson<AgentRun>("/api/agent-runs", payload);
+}
+
+export function fetchAgentRuns(limit = 20): Promise<AgentRunListResponse> {
+  return getJson<AgentRunListResponse>(`/api/agent-runs?limit=${limit}`);
+}
+
+export function fetchAgentRun(runKey: string): Promise<AgentRun> {
+  return getJson<AgentRun>(`/api/agent-runs/${encodeURIComponent(runKey)}`);
 }
 
 export function fetchDataProviders(): Promise<DataProviderListResponse> {
