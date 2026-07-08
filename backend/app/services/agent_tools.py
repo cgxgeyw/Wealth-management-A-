@@ -9,7 +9,15 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from app.services.data_fetcher import DataFetchError, get_klines, get_realtime_quote
+from app.services.data_fetcher import (
+    DataFetchError,
+    get_announcements,
+    get_klines,
+    get_market_news,
+    get_realtime_quote,
+    get_research_reports,
+)
+from app.services.stock_catalog import get_stock_profile
 from app.services.technical_indicators import calculate_indicators
 
 
@@ -79,29 +87,29 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "stock.news": ToolSpec(
         key="stock.news",
         name="个股新闻",
-        description="读取个股相关新闻。执行器后续接入新闻数据服务。",
+        description="读取市场快讯并按股票代码、股票名称和关联股票过滤。",
         category="news",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.announcements": ToolSpec(
         key="stock.announcements",
         name="公司公告",
-        description="读取公司公告。执行器后续接入公告数据服务。",
+        description="读取公司公告，复用现有公告数据源路由。",
         category="news",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.research_reports": ToolSpec(
         key="stock.research_reports",
         name="研报检索",
-        description="读取券商研报列表。执行器后续接入研报数据服务。",
+        description="读取券商研报列表，复用现有研报数据源路由。",
         category="news",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.fundamentals": ToolSpec(
         key="stock.fundamentals",
@@ -352,6 +360,53 @@ def _indicators_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
     return _model_to_dict(indicators)
 
 
+def _stock_news_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 30, 1, 100)
+    normalized_symbol = symbol.strip().lower().removeprefix("sh").removeprefix("sz").removeprefix("bj")
+    profile = get_stock_profile(symbol)
+    keywords = [normalized_symbol]
+    if profile:
+        keywords.append(profile.name)
+    try:
+        news = get_market_news(db, limit=100)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    filtered = [
+        item
+        for item in news.items
+        if any(keyword and keyword in f"{item.title}{item.content}" for keyword in keywords)
+        or normalized_symbol in item.related_stocks
+    ]
+    payload = _model_to_dict(news)
+    payload["items"] = [
+        _model_to_dict(item) if not isinstance(item, dict) else item
+        for item in filtered[:limit]
+    ]
+    payload["symbol"] = normalized_symbol
+    return payload
+
+
+def _announcements_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 20, 1, 100)
+    try:
+        announcements = get_announcements(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(announcements)
+
+
+def _research_reports_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 10, 1, 50)
+    try:
+        reports = get_research_reports(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(reports)
+
+
 def _write_document(_: Session, params: dict[str, Any]) -> dict[str, Any]:
     title = _require_text(params, "title")
     topic = _require_text(params, "topic")
@@ -407,5 +462,8 @@ _HANDLERS: dict[str, ToolHandler] = {
     "stock.quote": _quote_tool,
     "stock.bars": _bars_tool,
     "stock.indicators": _indicators_tool,
+    "stock.news": _stock_news_tool,
+    "stock.announcements": _announcements_tool,
+    "stock.research_reports": _research_reports_tool,
     "document.write": _write_document,
 }

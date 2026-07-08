@@ -3,7 +3,17 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schemas.data_source import KlineBar, KlineResponse, RealtimeQuote
+from app.schemas.data_source import (
+    AnnouncementItem,
+    AnnouncementResponse,
+    KlineBar,
+    KlineResponse,
+    NewsItem,
+    NewsResponse,
+    RealtimeQuote,
+    ResearchReportItem,
+    ResearchReportResponse,
+)
 
 
 def test_agent_config_update_render_and_rollback() -> None:
@@ -170,3 +180,77 @@ def test_agent_market_tools_execute_with_permissions(monkeypatch) -> None:
     assert indicators.status_code == 200
     indicator_names = {item["name"] for item in indicators.json()["output"]["items"]}
     assert {"MA5", "DIF", "DEA", "MACD"}.issubset(indicator_names)
+
+
+def test_agent_news_tools_execute_with_permissions(monkeypatch) -> None:
+    def fake_market_news(db, limit: int = 30) -> NewsResponse:
+        return NewsResponse(
+            provider_key="pytest",
+            items=[
+                NewsItem(
+                    id="1",
+                    title="宁德时代发布储能进展",
+                    content="300750 相关",
+                    source="pytest",
+                    related_stocks=["300750"],
+                ),
+                NewsItem(id="2", title="无关新闻", content="其他公司", source="pytest"),
+            ],
+        )
+
+    def fake_announcements(db, symbol: str, limit: int = 20) -> AnnouncementResponse:
+        return AnnouncementResponse(
+            symbol=symbol,
+            provider_key="pytest",
+            items=[
+                AnnouncementItem(id="ann-1", symbol=symbol, title="年度权益分派公告", source="pytest"),
+            ],
+        )
+
+    def fake_reports(db, symbol: str, limit: int = 10) -> ResearchReportResponse:
+        return ResearchReportResponse(
+            symbol=symbol,
+            provider_key="pytest",
+            items=[
+                ResearchReportItem(id="rep-1", title="宁德时代深度报告", stock_code=symbol, org_name="pytest"),
+            ],
+        )
+
+    monkeypatch.setattr("app.services.agent_tools.get_market_news", fake_market_news)
+    monkeypatch.setattr("app.services.agent_tools.get_announcements", fake_announcements)
+    monkeypatch.setattr("app.services.agent_tools.get_research_reports", fake_reports)
+
+    with TestClient(app) as client:
+        registry = client.get("/api/agent-tools")
+        assert registry.status_code == 200
+        enabled_keys = {item["key"] for item in registry.json()["items"] if item["enabled"]}
+        assert {"stock.news", "stock.announcements", "stock.research_reports"}.issubset(enabled_keys)
+
+        client.patch(
+            "/api/agents/news",
+            json={
+                "tools": ["stock.news", "stock.announcements", "stock.research_reports"],
+                "change_note": "enable news tools",
+            },
+        )
+        news = client.post(
+            "/api/agent-tools/news/stock.news/run",
+            json={"params": {"symbol": "300750", "limit": 10}},
+        )
+        announcements = client.post(
+            "/api/agent-tools/news/stock.announcements/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+        reports = client.post(
+            "/api/agent-tools/news/stock.research_reports/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+
+    assert news.status_code == 200
+    news_items = news.json()["output"]["items"]
+    assert len(news_items) == 1
+    assert news_items[0]["id"] == "1"
+    assert announcements.status_code == 200
+    assert announcements.json()["output"]["items"][0]["title"] == "年度权益分派公告"
+    assert reports.status_code == 200
+    assert reports.json()["output"]["items"][0]["title"] == "宁德时代深度报告"
