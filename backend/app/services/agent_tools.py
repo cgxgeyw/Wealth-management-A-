@@ -12,8 +12,15 @@ from sqlalchemy.orm import Session
 from app.services.data_fetcher import (
     DataFetchError,
     get_announcements,
+    get_dragon_tiger,
+    get_financial_statements,
+    get_fund_flow,
+    get_fundamentals,
     get_klines,
+    get_lockup_expiry,
     get_market_news,
+    get_margin_trading,
+    get_northbound_flow,
     get_realtime_quote,
     get_research_reports,
 )
@@ -114,65 +121,65 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "stock.fundamentals": ToolSpec(
         key="stock.fundamentals",
         name="基本面快照",
-        description="读取估值、盈利、成长等基本面快照。执行器后续接入数据服务。",
+        description="读取估值、盈利、成长等基本面快照，复用现有基本面数据源路由。",
         category="fundamental",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.financial_statements": ToolSpec(
         key="stock.financial_statements",
         name="财务报表",
-        description="读取利润表、资产负债表、现金流等财务报表。执行器后续接入数据服务。",
+        description="读取利润表、资产负债表、现金流等财务报表。",
         category="fundamental",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.fund_flow": ToolSpec(
         key="stock.fund_flow",
         name="资金流",
-        description="读取主力资金流向。执行器后续接入资金数据服务。",
+        description="读取主力资金流向，复用现有资金流数据源路由。",
         category="capital",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "market.northbound_flow": ToolSpec(
         key="market.northbound_flow",
         name="北向资金",
-        description="读取北向资金数据。执行器后续接入市场数据服务。",
+        description="读取北向资金数据，复用现有市场级数据源路由。",
         category="capital",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.dragon_tiger": ToolSpec(
         key="stock.dragon_tiger",
         name="龙虎榜",
-        description="读取龙虎榜交易行为。执行器后续接入数据服务。",
+        description="读取龙虎榜交易行为，复用现有交易行为数据源路由。",
         category="capital",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.margin_trading": ToolSpec(
         key="stock.margin_trading",
         name="融资融券",
-        description="读取融资融券余额与变动。执行器后续接入数据服务。",
+        description="读取融资融券余额与变动，复用现有两融数据源路由。",
         category="capital",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "stock.lockup_expiry": ToolSpec(
         key="stock.lockup_expiry",
         name="限售解禁",
-        description="读取限售解禁风险。执行器后续接入数据服务。",
+        description="读取限售解禁风险，复用现有风险数据源路由。",
         category="risk",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
-        enabled=False,
+        enabled=True,
     ),
     "data.quality": ToolSpec(
         key="data.quality",
@@ -407,6 +414,81 @@ def _research_reports_tool(db: Session, params: dict[str, Any]) -> dict[str, Any
     return _model_to_dict(reports)
 
 
+def _fundamentals_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    try:
+        fundamentals = get_fundamentals(db, symbol=symbol)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(fundamentals)
+
+
+def _financial_statements_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    statement_type = str(params.get("statement_type") or "income")
+    limit = _int_param(params, "limit", 4, 1, 20)
+    try:
+        statements = get_financial_statements(
+            db,
+            symbol=symbol,
+            statement_type=statement_type,
+            limit=limit,
+        )
+    except DataFetchError as exc:
+        status_code = 400 if exc.error_type.startswith("invalid") else 502
+        raise AgentToolError(str(exc), status_code=status_code) from exc
+    return _model_to_dict(statements)
+
+
+def _fund_flow_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 20, 1, 120)
+    try:
+        flow = get_fund_flow(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(flow)
+
+
+def _northbound_flow_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    limit = _int_param(params, "limit", 20, 1, 100)
+    try:
+        flow = get_northbound_flow(db, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(flow)
+
+
+def _dragon_tiger_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 10, 1, 50)
+    try:
+        data = get_dragon_tiger(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(data)
+
+
+def _lockup_expiry_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 10, 1, 50)
+    try:
+        data = get_lockup_expiry(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(data)
+
+
+def _margin_trading_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    symbol = _require_text(params, "symbol")
+    limit = _int_param(params, "limit", 10, 1, 50)
+    try:
+        data = get_margin_trading(db, symbol=symbol, limit=limit)
+    except DataFetchError as exc:
+        raise AgentToolError(str(exc), status_code=502) from exc
+    return _model_to_dict(data)
+
+
 def _write_document(_: Session, params: dict[str, Any]) -> dict[str, Any]:
     title = _require_text(params, "title")
     topic = _require_text(params, "topic")
@@ -465,5 +547,12 @@ _HANDLERS: dict[str, ToolHandler] = {
     "stock.news": _stock_news_tool,
     "stock.announcements": _announcements_tool,
     "stock.research_reports": _research_reports_tool,
+    "stock.fundamentals": _fundamentals_tool,
+    "stock.financial_statements": _financial_statements_tool,
+    "stock.fund_flow": _fund_flow_tool,
+    "market.northbound_flow": _northbound_flow_tool,
+    "stock.dragon_tiger": _dragon_tiger_tool,
+    "stock.lockup_expiry": _lockup_expiry_tool,
+    "stock.margin_trading": _margin_trading_tool,
     "document.write": _write_document,
 }

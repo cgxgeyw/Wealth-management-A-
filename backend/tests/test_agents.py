@@ -6,10 +6,24 @@ from app.main import app
 from app.schemas.data_source import (
     AnnouncementItem,
     AnnouncementResponse,
+    DragonTigerItem,
+    DragonTigerResponse,
+    FinancialStatementResponse,
+    FinancialStatementRow,
+    FundamentalMetric,
+    FundamentalResponse,
+    FundFlowItem,
+    FundFlowResponse,
     KlineBar,
     KlineResponse,
+    LockupExpiryItem,
+    LockupExpiryResponse,
+    MarginTradingItem,
+    MarginTradingResponse,
     NewsItem,
     NewsResponse,
+    NorthboundFlowItem,
+    NorthboundFlowResponse,
     RealtimeQuote,
     ResearchReportItem,
     ResearchReportResponse,
@@ -254,3 +268,138 @@ def test_agent_news_tools_execute_with_permissions(monkeypatch) -> None:
     assert announcements.json()["output"]["items"][0]["title"] == "年度权益分派公告"
     assert reports.status_code == 200
     assert reports.json()["output"]["items"][0]["title"] == "宁德时代深度报告"
+
+
+def test_agent_fundamental_and_capital_tools_execute_with_permissions(monkeypatch) -> None:
+    def fake_fundamentals(db, symbol: str) -> FundamentalResponse:
+        return FundamentalResponse(
+            symbol=symbol,
+            name="宁德时代",
+            provider_key="pytest",
+            metrics=[FundamentalMetric(key="pe_ttm", label="市盈率TTM", value=22.5)],
+        )
+
+    def fake_financial_statements(
+        db,
+        symbol: str,
+        statement_type: str = "income",
+        limit: int = 4,
+    ) -> FinancialStatementResponse:
+        return FinancialStatementResponse(
+            symbol=symbol,
+            statement_type=statement_type,
+            provider_key="pytest",
+            items=[
+                FinancialStatementRow(
+                    report_date="2025-12-31",
+                    values={"revenue": 1000.0, "net_profit": 120.0},
+                )
+            ],
+        )
+
+    def fake_fund_flow(db, symbol: str, limit: int = 20) -> FundFlowResponse:
+        return FundFlowResponse(
+            symbol=symbol,
+            name="宁德时代",
+            provider_key="pytest",
+            items=[FundFlowItem(date="2026-07-08", main_net_inflow=1000000.0)],
+        )
+
+    def fake_northbound_flow(db, limit: int = 20) -> NorthboundFlowResponse:
+        return NorthboundFlowResponse(
+            provider_key="pytest",
+            items=[NorthboundFlowItem(trade_date="2026-07-08", mutual_type="沪深股通", net_deal_amount=12.3)],
+        )
+
+    def fake_dragon_tiger(db, symbol: str, limit: int = 10) -> DragonTigerResponse:
+        return DragonTigerResponse(
+            symbol=symbol,
+            provider_key="pytest",
+            items=[DragonTigerItem(trade_date="2026-07-08", symbol=symbol, reason="涨幅偏离值达7%")],
+        )
+
+    def fake_lockup_expiry(db, symbol: str, limit: int = 10) -> LockupExpiryResponse:
+        return LockupExpiryResponse(
+            symbol=symbol,
+            provider_key="pytest",
+            items=[LockupExpiryItem(free_date="2026-08-01", symbol=symbol, shares=10000.0)],
+        )
+
+    def fake_margin_trading(db, symbol: str, limit: int = 10) -> MarginTradingResponse:
+        return MarginTradingResponse(
+            symbol=symbol,
+            provider_key="pytest",
+            items=[MarginTradingItem(date="2026-07-08", symbol=symbol, margin_balance=2000000.0)],
+        )
+
+    monkeypatch.setattr("app.services.agent_tools.get_fundamentals", fake_fundamentals)
+    monkeypatch.setattr("app.services.agent_tools.get_financial_statements", fake_financial_statements)
+    monkeypatch.setattr("app.services.agent_tools.get_fund_flow", fake_fund_flow)
+    monkeypatch.setattr("app.services.agent_tools.get_northbound_flow", fake_northbound_flow)
+    monkeypatch.setattr("app.services.agent_tools.get_dragon_tiger", fake_dragon_tiger)
+    monkeypatch.setattr("app.services.agent_tools.get_lockup_expiry", fake_lockup_expiry)
+    monkeypatch.setattr("app.services.agent_tools.get_margin_trading", fake_margin_trading)
+
+    tool_keys = [
+        "stock.fundamentals",
+        "stock.financial_statements",
+        "stock.fund_flow",
+        "market.northbound_flow",
+        "stock.dragon_tiger",
+        "stock.lockup_expiry",
+        "stock.margin_trading",
+    ]
+
+    with TestClient(app) as client:
+        registry = client.get("/api/agent-tools")
+        assert registry.status_code == 200
+        enabled_keys = {item["key"] for item in registry.json()["items"] if item["enabled"]}
+        assert set(tool_keys).issubset(enabled_keys)
+
+        client.patch(
+            "/api/agents/capital_flow",
+            json={"tools": tool_keys, "change_note": "enable capital tools"},
+        )
+        fundamentals = client.post(
+            "/api/agent-tools/capital_flow/stock.fundamentals/run",
+            json={"params": {"symbol": "300750"}},
+        )
+        statements = client.post(
+            "/api/agent-tools/capital_flow/stock.financial_statements/run",
+            json={"params": {"symbol": "300750", "statement_type": "income", "limit": 2}},
+        )
+        fund_flow = client.post(
+            "/api/agent-tools/capital_flow/stock.fund_flow/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+        northbound = client.post(
+            "/api/agent-tools/capital_flow/market.northbound_flow/run",
+            json={"params": {"limit": 5}},
+        )
+        dragon_tiger = client.post(
+            "/api/agent-tools/capital_flow/stock.dragon_tiger/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+        lockup = client.post(
+            "/api/agent-tools/capital_flow/stock.lockup_expiry/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+        margin = client.post(
+            "/api/agent-tools/capital_flow/stock.margin_trading/run",
+            json={"params": {"symbol": "300750", "limit": 5}},
+        )
+
+    assert fundamentals.status_code == 200
+    assert fundamentals.json()["output"]["metrics"][0]["key"] == "pe_ttm"
+    assert statements.status_code == 200
+    assert statements.json()["output"]["items"][0]["values"]["revenue"] == 1000.0
+    assert fund_flow.status_code == 200
+    assert fund_flow.json()["output"]["items"][0]["main_net_inflow"] == 1000000.0
+    assert northbound.status_code == 200
+    assert northbound.json()["output"]["items"][0]["net_deal_amount"] == 12.3
+    assert dragon_tiger.status_code == 200
+    assert dragon_tiger.json()["output"]["items"][0]["reason"] == "涨幅偏离值达7%"
+    assert lockup.status_code == 200
+    assert lockup.json()["output"]["items"][0]["shares"] == 10000.0
+    assert margin.status_code == 200
+    assert margin.json()["output"]["items"][0]["margin_balance"] == 2000000.0
