@@ -242,6 +242,13 @@ button {
   margin-top: 12px;
 }
 
+.multi-agent-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 12px;
+  margin-top: 12px;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1340,11 +1347,36 @@ tbody tr.row-active {
   font-size: 12px;
 }
 
+.symbol-input {
+  width: 104px;
+}
+
+.chat-agent-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px;
+}
+
+.chat-agent-summary strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .stage-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 6px;
   padding: 12px;
+}
+
+.stage-strip.flow-strip {
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
 }
 
 .stage {
@@ -1380,6 +1412,13 @@ tbody tr.row-active {
   padding: 0 12px 12px;
 }
 
+.chat-thread {
+  min-height: 420px;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding-top: 12px;
+}
+
 .msg {
   max-width: 78ch;
   border: 1px solid var(--border);
@@ -1396,8 +1435,9 @@ tbody tr.row-active {
 }
 
 .msg p {
-  margin: 5px 0 0;
+  margin: 0;
   color: var(--ink-soft);
+  white-space: pre-wrap;
 }
 
 .msg.muted {
@@ -1495,6 +1535,41 @@ tbody tr.row-active {
   color: var(--ink-soft);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.tool-call-list {
+  padding: 0 12px 12px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.preset-card {
+  display: grid;
+  gap: 6px;
+  min-height: 104px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  color: var(--ink-soft);
+  background: var(--panel);
+  text-align: left;
+}
+
+.preset-card.active {
+  border-color: var(--blue);
+  background: #eff6ff;
+}
+
+.preset-card span,
+.preset-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .agent-row {
@@ -1716,6 +1791,7 @@ tbody tr.row-active {
   .reports-layout,
   .agent-layout,
   .chat-layout,
+  .multi-agent-layout,
   .settings-grid {
     grid-template-columns: 1fr;
   }

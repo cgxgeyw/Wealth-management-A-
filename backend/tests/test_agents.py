@@ -207,6 +207,31 @@ def test_agent_config_update_render_and_rollback() -> None:
         assert rollback.json()["task_prompt"] == original["task_prompt"]
 
 
+def test_single_agent_chat_uses_agent_tools(monkeypatch) -> None:
+    def fake_execute_tool(db, tool_key, params):
+        return {"symbol": params.get("symbol"), "items": [{"title": "测试上下文"}]}
+
+    monkeypatch.setattr("app.services.agent_chat.execute_tool", fake_execute_tool)
+
+    with TestClient(app) as client:
+        client.patch(
+            "/api/agents/technical",
+            json={"tools": ["stock.quote", "stock.indicators"], "change_note": "chat tool test"},
+        )
+        response = client.post(
+            "/api/agent-chat/technical",
+            json={"message": "300750 技术面怎么看", "symbol": "300750"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agent_key"] == "technical"
+    assert body["model_status"] == "fallback_no_api_key"
+    assert body["tool_calls"]
+    assert body["tool_calls"][0]["tool_key"] == "stock.quote"
+    assert "技术面" in body["content"]
+
+
 def test_agent_test_run_preview() -> None:
     with TestClient(app) as client:
         response = client.post(

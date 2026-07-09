@@ -111,6 +111,29 @@ export interface AgentToolRunResponse {
   metadata: Record<string, unknown>;
 }
 
+export interface AgentChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AgentChatToolCall {
+  tool_key: string;
+  status: string;
+  params: Record<string, unknown>;
+  output_preview: Record<string, unknown>;
+  error: string;
+}
+
+export interface AgentChatResponse {
+  agent_key: string;
+  agent_name: string;
+  content: string;
+  model_status: string;
+  model: string;
+  tool_calls: AgentChatToolCall[];
+  created_at: string;
+}
+
 export interface AgentRunStep {
   agent_key: string;
   agent_name: string;
@@ -864,6 +887,19 @@ export function runAgentTool(
     `/api/agent-tools/${encodeURIComponent(agentKey)}/${encodeURIComponent(toolKey)}/run`,
     { params }
   );
+}
+
+export function sendAgentChat(
+  agentKey: string,
+  payload: {
+    message: string;
+    symbol?: string;
+    variables?: Record<string, string>;
+    history?: AgentChatMessage[];
+    max_tool_calls?: number;
+  }
+): Promise<AgentChatResponse> {
+  return postJson<AgentChatResponse>(`/api/agent-chat/${encodeURIComponent(agentKey)}`, payload);
 }
 
 export function createAgentRun(payload: AgentRunCreatePayload): Promise<AgentRun> {

@@ -23,7 +23,6 @@ import {
   fetchAnalysisTaskReport,
   fetchAnalysisTasks,
   fetchAgentRun,
-  fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
@@ -43,6 +42,7 @@ import {
   rollbackAgent,
   runAgentTool,
   searchKnowledge,
+  sendAgentChat,
   testRunAgent,
   updateAgent,
   updateKnowledgeBase,
@@ -51,6 +51,8 @@ import {
   type AgentPromptVersion,
   type AgentRenderResponse,
   type AgentRun,
+  type AgentChatMessage,
+  type AgentChatResponse,
   type AgentTestRunResponse,
   type AgentToolRunResponse,
   type AgentToolSpec,
@@ -73,6 +75,7 @@ type PageKey =
   | "data_sources"
   | "data_analysis"
   | "chat"
+  | "multi_agent"
   | "agents"
   | "knowledge_base"
   | "tasks_reports"
@@ -88,7 +91,8 @@ interface NavItem {
 const navItems: NavItem[] = [
   { key: "data_sources", name: "数据源管理", description: "Provider、路由、缓存与健康检查", icon: <Database size={17} /> },
   { key: "data_analysis", name: "数据分析", description: "行情、K 线、新闻与指标", icon: <BarChart3 size={17} /> },
-  { key: "chat", name: "对话分析", description: "多 Agent 投研对话工作台", icon: <MessageSquareText size={17} /> },
+  { key: "chat", name: "Agent 对话", description: "单 Agent 问答、工具引用与追问", icon: <MessageSquareText size={17} /> },
+  { key: "multi_agent", name: "多智能体分析", description: "流程预设、长任务与阶段进度", icon: <BrainCircuit size={17} /> },
   { key: "agents", name: "智能体管理", description: "提示词、工具权限与版本", icon: <Bot size={17} /> },
   { key: "knowledge_base", name: "知识库管理", description: "资料导入、向量化与检索测试", icon: <LibraryBig size={17} /> },
   { key: "tasks_reports", name: "任务与报告", description: "任务队列、研报归档与导出", icon: <FileText size={17} /> },
@@ -105,8 +109,12 @@ const pageMeta: Record<PageKey, { title: string; subtitle: string }> = {
     subtitle: "接入真实行情、K 线和市场快讯，作为后续 Agent 分析的输入层。"
   },
   chat: {
-    title: "对话分析",
-    subtitle: "在同一上下文里查看 Agent 推理进度、证据引用和最终结论。"
+    title: "Agent 对话",
+    subtitle: "选择一个 Agent 单独聊天，工具调用只服务当前问答，不触发长流程报告。"
+  },
+  multi_agent: {
+    title: "多智能体分析",
+    subtitle: "选择分析流程、标的、周期和 Agent 组合，触发可追踪的长流程任务。"
   },
   agents: {
     title: "智能体管理",
@@ -163,171 +171,134 @@ function isTaskActive(task: AnalysisTask | null): boolean {
   return task ? ["pending", "running"].includes(task.status) : false;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function waitForAnalysisTask(taskKey: string, maxAttempts = 120): Promise<AnalysisTask> {
-  let latest = await fetchAnalysisTask(taskKey);
-  for (let attempt = 0; attempt < maxAttempts && isTaskActive(latest); attempt += 1) {
-    await sleep(1500);
-    latest = await fetchAnalysisTask(taskKey);
-  }
-  return latest;
-}
-
 function ChatAnalysisPage() {
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [selectedKey, setSelectedKey] = useState("technical");
   const [symbol, setSymbol] = useState("300750");
-  const [query, setQuery] = useState("分析 300750，给我一个 2 周交易视角。");
-  const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
-  const [runs, setRuns] = useState<AgentRun[]>([]);
-  const [snapshotDetail, setSnapshotDetail] = useState<DataSnapshot | null>(null);
+  const [input, setInput] = useState("300750 现在技术面怎么看？");
+  const [messages, setMessages] = useState<AgentChatMessage[]>([
+    { role: "assistant", content: "选择一个 Agent 后直接提问。我会只用这个 Agent 的提示词和工具权限回答，不会启动多智能体长流程。" }
+  ]);
+  const [latestResponse, setLatestResponse] = useState<AgentChatResponse | null>(null);
   const [message, setMessage] = useState("");
-  const [running, setRunning] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  async function loadRuns() {
-    const result = await fetchAgentRuns(8);
-    setRuns(result.items);
-    setLatestRun((current) => current ?? result.items[0] ?? null);
+  async function loadChatAgents() {
+    const result = await fetchAgents();
+    const enabled = result.items.filter((agent) => agent.enabled);
+    setAgents(enabled);
+    setSelectedKey((current) => enabled.some((agent) => agent.key === current) ? current : enabled[0]?.key ?? "");
   }
 
   useEffect(() => {
-    loadRuns().catch((err: unknown) => {
-      setMessage(err instanceof Error ? err.message : "运行记录加载失败");
+    loadChatAgents().catch((err: unknown) => {
+      setMessage(err instanceof Error ? err.message : "Agent 加载失败");
     });
   }, []);
 
-  useEffect(() => {
-    if (latestRun?.snapshot_id) {
-      openSnapshot(latestRun.snapshot_id).catch((err: unknown) => {
-        setMessage(err instanceof Error ? err.message : "快照详情加载失败");
-      });
-    }
-  }, [latestRun?.snapshot_id]);
-
-  async function startRun(includeReport = false) {
-    setRunning(true);
-    setMessage("");
-    try {
-      const task = await createAnalysisTask({
-        symbol,
-        query,
-        mode: "analysis",
-        period: "daily",
-        limit: 60,
-        include_report: includeReport
-      });
-      setMessage(`分析任务 ${task.task_key} 已创建，等待后台执行`);
-      const completedTask = await waitForAnalysisTask(task.task_key);
-      if (completedTask.status !== "completed" || !completedTask.run_key) {
-        throw new Error(completedTask.error_message || "分析任务未生成运行记录");
-      }
-      const result = await fetchAgentRun(completedTask.run_key);
-      if (!result) {
-        throw new Error("分析任务未生成运行记录");
-      }
-      setLatestRun(result);
-      await openSnapshot(result.snapshot_id);
-      await loadRuns();
-      setMessage(`分析任务 ${completedTask.task_key} 已完成`);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Agent 编排失败");
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  async function openSnapshot(snapshotId: number) {
-    if (!snapshotId) {
+  async function sendMessage() {
+    const text = input.trim();
+    if (!text || !selectedKey) {
       return;
     }
+    const userMessage: AgentChatMessage = { role: "user", content: text };
+    const nextHistory = [...messages, userMessage];
+    setMessages(nextHistory);
+    setInput("");
+    setSending(true);
+    setMessage("");
     try {
-      setSnapshotDetail(await fetchDataSnapshot(snapshotId));
+      const response = await sendAgentChat(selectedKey, {
+        message: text,
+        symbol,
+        variables: { period: "daily" },
+        history: messages,
+        max_tool_calls: 4
+      });
+      setLatestResponse(response);
+      setMessages([...nextHistory, { role: "assistant", content: response.content }]);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "快照详情加载失败");
+      setMessage(err instanceof Error ? err.message : "Agent 对话失败");
+      setMessages([...nextHistory, { role: "assistant", content: "这次对话失败了，请检查 Agent 配置、模型配置或数据源状态后再试。" }]);
+    } finally {
+      setSending(false);
     }
   }
 
-  const stageNames = latestRun?.result.agent_summaries instanceof Array
-    ? latestRun.result.agent_summaries.map((item) => String((item as Record<string, unknown>).agent_name ?? "Agent"))
-    : ["数据获取", "技术面", "新闻", "基本面", "资金", "风控", "综合"];
-  const confidence = Number(latestRun?.result.confidence ?? 0);
+  const selectedAgent = agents.find((agent) => agent.key === selectedKey) ?? null;
+  const selectedTools = selectedAgent?.tools ?? [];
 
   return (
     <div className="chat-layout">
-      <Panel title="会话列表" className="conversation-panel">
-        {runs.length === 0 ? <div className="empty-hint">暂无运行记录</div> : null}
-        {runs.map((item) => (
-          <button className={`conversation ${latestRun?.run_key === item.run_key ? "active" : ""}`} key={item.run_key} onClick={() => setLatestRun(item)} type="button">
-            <strong>{item.symbol} {item.mode}</strong>
-            <span>{item.status} · {formatDateTime(item.created_at)}</span>
-          </button>
-        ))}
+      <Panel title="Agent">
+        <div className="agent-list">
+          {agents.map((agent) => (
+            <button className={selectedKey === agent.key ? "agent-row active" : "agent-row"} key={agent.key} onClick={() => setSelectedKey(agent.key)} type="button">
+              <div className="agent-avatar"><Bot size={15} /></div>
+              <div>
+                <strong>{agent.name}</strong>
+                <span>{agent.role || agent.key}</span>
+              </div>
+              <StatusBadge tone={agent.tools.length ? "green" : "amber"}>{agent.tools.length} tools</StatusBadge>
+            </button>
+          ))}
+          {agents.length === 0 ? <div className="empty-hint">暂无可用 Agent</div> : null}
+        </div>
       </Panel>
 
       <Panel
-        title="投研对话"
+        title={selectedAgent ? `${selectedAgent.name} 对话` : "Agent 对话"}
         actions={
           <>
-            <button className="btn btn-secondary" disabled={running} onClick={() => startRun(false)} type="button">重跑</button>
-            <button className="btn btn-secondary" disabled={!latestRun} type="button">导出</button>
-            <button className="btn btn-primary" disabled={running} onClick={() => startRun(true)} type="button">生成报告</button>
+            <input className="input mono symbol-input" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
+            <button className="btn btn-secondary" onClick={() => setMessages([])} type="button">清空</button>
           </>
         }
       >
-        {message ? <div className="notice">{message}</div> : null}
-        <div className="stage-strip">
-          {stageNames.map((stage, index) => (
-            <div className={latestRun ? "stage done" : index === 0 ? "stage active" : "stage"} key={`${stage}-${index}`}>
-              <span>{index + 1}</span>
-              <strong>{stage}</strong>
+        {message ? <div className="notice error">{message}</div> : null}
+        <div className="chat-agent-summary">
+          <div>
+            <span className="label">当前角色</span>
+            <strong>{selectedAgent?.description ?? "选择一个 Agent 开始"}</strong>
+          </div>
+          <StatusBadge tone={latestResponse?.model_status === "llm_completed" ? "green" : "amber"}>
+            {latestResponse?.model_status ?? "ready"}
+          </StatusBadge>
+        </div>
+        <div className="message-list chat-thread">
+          {messages.map((item, index) => (
+            <div className={`msg ${item.role === "user" ? "user" : "agent"}`} key={`${item.role}-${index}`}>
+              <p>{item.content}</p>
             </div>
           ))}
-        </div>
-        <div className="message-list">
-          <div className="msg user">{latestRun?.query || query}</div>
-          {latestRun?.steps.map((step) => (
-            <div className={step.status === "success" ? "msg agent" : "msg agent muted"} key={`${step.agent_key}-${step.tool_key}`}>
-              <strong>{step.agent_name} · {step.tool_key}</strong>
-              <p>{step.status === "success" ? String(step.output_preview.summary ?? "已获取数据") : step.error}</p>
-            </div>
-          ))}
-          {!latestRun ? <div className="msg agent muted"><strong>Agent 编排</strong><p>输入标的和问题后，系统会按 Agent 工具权限执行真实工具并生成可追踪结果。</p></div> : null}
-        </div>
-        <div className="conclusion">
-          <div><span className="label">结构化结论</span><strong>{String(latestRun?.result.conclusion ?? "等待运行 Agent 编排")}</strong></div>
-          <StatusBadge tone={confidence >= 80 ? "green" : confidence >= 50 ? "amber" : "red"}>置信度 {confidence}%</StatusBadge>
-          <p>成功工具 {String(latestRun?.result.tool_success_count ?? 0)} 个，失败工具 {String(latestRun?.result.tool_failed_count ?? 0)} 个。当前结论来自工具编排层，模型研讨层待接入。</p>
-          {latestRun ? (
-            <button className="link-button mono" onClick={() => openSnapshot(latestRun.snapshot_id)} type="button">
-              snapshot #{latestRun.snapshot_id} · {String(latestRun.result.snapshot_summary ?? "")}
-            </button>
-          ) : null}
+          {sending ? <div className="msg agent muted"><p>Agent 正在读取工具上下文并回复...</p></div> : null}
         </div>
         <div className="composer">
-          <input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
-          <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="继续追问，例如：请空方 Agent 反驳这个结论" />
-          <button className="btn btn-primary" disabled={running} onClick={() => startRun(false)} type="button">{running ? "运行中" : "发送"}</button>
+          <input
+            className="input"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && sendMessage()}
+            placeholder="问当前 Agent，例如：这只股票的主要风险是什么？"
+          />
+          <button className="btn btn-primary" disabled={sending || !selectedKey} onClick={sendMessage} type="button">
+            {sending ? "发送中" : "发送"}
+          </button>
         </div>
       </Panel>
 
-      <Panel title="上下文与引用">
-        <div className="kv-list">
-          <div><span>股票</span><strong>{latestRun?.symbol ?? symbol}</strong></div>
-          <div><span>运行编号</span><strong className="mono">{latestRun?.run_key ?? "未创建"}</strong></div>
-          <div>
-            <span>数据快照</span>
-            {latestRun ? (
-              <button className="link-button mono" onClick={() => openSnapshot(latestRun.snapshot_id)} type="button">#{latestRun.snapshot_id}</button>
-            ) : <strong className="mono">未创建</strong>}
-          </div>
-          <div><span>状态</span><strong>{latestRun?.status ?? "idle"}</strong></div>
+      <Panel title="工具与引用">
+        <div className="reference-list compact">
+          {selectedTools.map((tool) => <button key={tool} type="button">{tool}</button>)}
+          {selectedTools.length === 0 ? <button type="button">未配置工具</button> : null}
         </div>
-        <SnapshotDetail snapshot={snapshotDetail} />
-        <div className="reference-list">
-          {latestRun?.steps.map((step) => (
-            <button key={`${step.agent_key}-${step.tool_key}-ref`} type="button">{step.tool_key} · {step.status}</button>
-          )) ?? <button type="button">暂无引用</button>}
+        <div className="snapshot-list tool-call-list">
+          {latestResponse?.tool_calls.map((call) => (
+            <div key={`${call.tool_key}-${call.status}`}>
+              <span>{call.tool_key} · {call.status}</span>
+              <p>{call.status === "success" ? String(call.output_preview.summary ?? "已获取上下文") : call.error}</p>
+            </div>
+          )) ?? <div className="empty-hint">最近一次工具调用会显示在这里</div>}
         </div>
       </Panel>
     </div>
@@ -1318,16 +1289,186 @@ function escapeSeparatorForInput(value: string): string {
   return value.replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 }
 
+const analysisPresets = [
+  {
+    key: "quick",
+    name: "快速分析",
+    description: "数据管家、技术面、新闻、投研总监，适合先看方向。",
+    agentKeys: ["data_steward", "technical", "news", "research_director"],
+    includeReport: false
+  },
+  {
+    key: "standard",
+    name: "标准分析",
+    description: "覆盖技术、新闻、基本面、资金和风控，生成 Markdown 报告。",
+    agentKeys: ["data_steward", "technical", "news", "fundamental", "capital_flow", "risk", "research_director"],
+    includeReport: true
+  },
+  {
+    key: "deep",
+    name: "深度分析",
+    description: "加入政策行业、多方、空方和风控审查，适合正式研判。",
+    agentKeys: ["data_steward", "technical", "news", "fundamental", "policy_industry", "capital_flow", "bull", "bear", "risk", "research_director"],
+    includeReport: true
+  },
+  {
+    key: "debate",
+    name: "多空辩论",
+    description: "聚焦多方和空方论证，适合检查结论是否过度单边。",
+    agentKeys: ["technical", "news", "fundamental", "capital_flow", "bull", "bear", "risk", "research_director"],
+    includeReport: true
+  },
+  {
+    key: "risk",
+    name: "风控审查",
+    description: "只跑数据质量、事件风险、解禁和两融相关 Agent。",
+    agentKeys: ["data_steward", "news", "capital_flow", "risk"],
+    includeReport: false
+  }
+];
+
+function MultiAgentAnalysisPage() {
+  const [presetKey, setPresetKey] = useState("standard");
+  const [symbol, setSymbol] = useState("300750");
+  const [period, setPeriod] = useState("daily");
+  const [query, setQuery] = useState("请生成一个标准 A 股投研分析，重点关注未来两周的机会和风险。");
+  const [task, setTask] = useState<AnalysisTask | null>(null);
+  const [run, setRun] = useState<AgentRun | null>(null);
+  const [message, setMessage] = useState("");
+  const [running, setRunning] = useState(false);
+
+  const preset = analysisPresets.find((item) => item.key === presetKey) ?? analysisPresets[1];
+
+  useEffect(() => {
+    if (!task || !isTaskActive(task)) {
+      return undefined;
+    }
+    const events = new EventSource(analysisTaskEventsUrl(task.task_key));
+    events.addEventListener("task", (event) => {
+      setTask(JSON.parse((event as MessageEvent).data) as AnalysisTask);
+    });
+    events.addEventListener("done", () => {
+      events.close();
+      fetchAnalysisTask(task.task_key)
+        .then(async (nextTask) => {
+          setTask(nextTask);
+          if (nextTask.run_key) {
+            setRun(await fetchAgentRun(nextTask.run_key));
+          }
+        })
+        .catch((err: unknown) => setMessage(err instanceof Error ? err.message : "任务刷新失败"));
+    });
+    events.onerror = () => events.close();
+    return () => events.close();
+  }, [task?.task_key, task?.status]);
+
+  async function startTask() {
+    setRunning(true);
+    setMessage("");
+    setRun(null);
+    try {
+      const created = await createAnalysisTask({
+        symbol,
+        query,
+        mode: preset.key,
+        agent_keys: preset.agentKeys,
+        period,
+        limit: preset.key === "quick" ? 60 : 100,
+        include_report: preset.includeReport
+      });
+      setTask(created);
+      setMessage(`任务 ${created.task_key} 已创建`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "任务创建失败");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const stageAgents = preset.agentKeys;
+
+  return (
+    <div className="page-grid multi-agent-layout">
+      <div className="main-column">
+        {message ? <div className="notice">{message}</div> : null}
+        <Panel title="流程预设">
+          <div className="preset-grid">
+            {analysisPresets.map((item) => (
+              <button className={presetKey === item.key ? "preset-card active" : "preset-card"} key={item.key} onClick={() => setPresetKey(item.key)} type="button">
+                <strong>{item.name}</strong>
+                <span>{item.description}</span>
+                <small>{item.agentKeys.length} agents · {item.includeReport ? "报告" : "不生成报告"}</small>
+              </button>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel
+          title="任务参数"
+          actions={<button className="btn btn-primary" disabled={running || isTaskActive(task)} onClick={startTask} type="button">{isTaskActive(task) ? "执行中" : "启动分析"}</button>}
+        >
+          <div className="form-grid compact">
+            <label>标的代码<input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} /></label>
+            <label>周期<select className="input" value={period} onChange={(event) => setPeriod(event.target.value)}>
+              <option value="daily">日K</option>
+              <option value="weekly">周K</option>
+              <option value="monthly">月K</option>
+            </select></label>
+          </div>
+          <div className="form-stack tight">
+            <label>分析问题<textarea className="textarea" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          </div>
+        </Panel>
+
+        <Panel title="阶段进度">
+          <div className="stage-strip flow-strip">
+            {stageAgents.map((agentKey, index) => (
+              <div className={task && task.progress >= ((index + 1) / stageAgents.length) * 80 ? "stage done" : task ? "stage active" : "stage"} key={agentKey}>
+                <span>{index + 1}</span>
+                <strong>{agentKey}</strong>
+              </div>
+            ))}
+          </div>
+          {task ? (
+            <div className="task-summary">
+              <div><span>任务编号</span><strong className="mono">{task.task_key}</strong></div>
+              <div><span>状态</span><strong>{task.status} · {task.stage}</strong></div>
+              <div><span>进度</span><strong>{task.progress}%</strong></div>
+            </div>
+          ) : <div className="empty-hint">启动后显示实时阶段、快照和运行编号</div>}
+        </Panel>
+      </div>
+
+      <Panel title="结果预览">
+        {run ? (
+          <>
+            <div className="report-block">
+              <div>
+                <span className="label">综合结论</span>
+                <h3>{String(run.result.conclusion ?? "分析完成")}</h3>
+                <p>运行编号 {run.run_key}，快照 #{run.snapshot_id}。</p>
+              </div>
+              <StatusBadge tone={Number(run.result.confidence ?? 0) >= 80 ? "green" : "amber"}>{String(run.result.confidence ?? 0)}%</StatusBadge>
+            </div>
+            <div className="reference-list">
+              {run.steps.map((step) => <button key={`${step.agent_key}-${step.tool_key}`} type="button">{step.agent_name} · {step.tool_key} · {step.status}</button>)}
+            </div>
+          </>
+        ) : (
+          <div className="empty-hint">长流程分析完成后，这里显示结论和工具轨迹。完整归档在“任务与报告”。</div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 function TasksReportsPage() {
   const [tasks, setTasks] = useState<AnalysisTask[]>([]);
   const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null);
   const [selectedTask, setSelectedTask] = useState<AnalysisTask | null>(null);
   const [snapshotDetail, setSnapshotDetail] = useState<DataSnapshot | null>(null);
   const [reportDetail, setReportDetail] = useState<AnalysisTaskReportResponse | null>(null);
-  const [taskSymbol, setTaskSymbol] = useState("300750");
-  const [taskQuery, setTaskQuery] = useState("生成标准 A 股投研分析报告。");
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
 
   async function loadTasks(openFirst = true) {
     const result = await fetchAnalysisTasks(30);
@@ -1337,7 +1478,7 @@ function TasksReportsPage() {
       : result.items[0] ?? null;
     setSelectedTask(nextTask);
     if (openFirst && nextTask?.run_key) {
-      await openTask(nextTask, { resetReport: false, syncForm: false });
+      await openTask(nextTask, { resetReport: false });
     }
   }
 
@@ -1390,13 +1531,9 @@ function TasksReportsPage() {
     }
   }, [selectedRun?.snapshot_id]);
 
-  async function openTask(task: AnalysisTask, options: { resetReport?: boolean; syncForm?: boolean } = {}) {
-    const { resetReport = true, syncForm = true } = options;
+  async function openTask(task: AnalysisTask, options: { resetReport?: boolean } = {}) {
+    const { resetReport = true } = options;
     setSelectedTask(task);
-    if (syncForm) {
-      setTaskSymbol(task.symbol);
-      setTaskQuery(task.query || "生成标准 A 股投研分析报告。");
-    }
     if (resetReport) {
       setReportDetail(null);
     }
@@ -1413,31 +1550,6 @@ function TasksReportsPage() {
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "运行详情加载失败");
-    }
-  }
-
-  async function startStandardTask() {
-    setLoading(true);
-    setMessage("");
-    try {
-      const task = await createAnalysisTask({
-        symbol: taskSymbol,
-        query: taskQuery,
-        mode: "standard",
-        period: "daily",
-        limit: 80,
-        include_report: true
-      });
-      setTasks((current) => [task, ...current.filter((item) => item.task_key !== task.task_key)]);
-      setSelectedTask(task);
-      setSelectedRun(null);
-      setSnapshotDetail(null);
-      setReportDetail(null);
-      setMessage(`分析任务 ${task.task_key} 已创建，后台执行中`);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "分析任务创建失败");
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -1477,16 +1589,9 @@ function TasksReportsPage() {
         <Panel
           title="分析任务队列"
           actions={
-            <>
-              <button className="btn btn-secondary" disabled={loading} onClick={() => loadTasks()} type="button">刷新</button>
-              <button className="btn btn-primary" disabled={loading} onClick={startStandardTask} type="button">{loading ? "运行中" : "新建标准任务"}</button>
-            </>
+            <button className="btn btn-primary" onClick={() => loadTasks()} type="button">刷新</button>
           }
         >
-          <div className="form-grid two">
-            <label>标的代码<input className="input mono" value={taskSymbol} onChange={(event) => setTaskSymbol(event.target.value)} /></label>
-            <label>任务问题<input className="input" value={taskQuery} onChange={(event) => setTaskQuery(event.target.value)} /></label>
-          </div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>任务</th><th>标的</th><th>模式</th><th>状态</th><th>阶段</th><th>进度</th><th>快照</th></tr></thead>
@@ -1642,6 +1747,8 @@ function renderPage(activePage: PageKey) {
       return <DataAnalysisPage />;
     case "chat":
       return <ChatAnalysisPage />;
+    case "multi_agent":
+      return <MultiAgentAnalysisPage />;
     case "agents":
       return <AgentManagementPage />;
     case "knowledge_base":
