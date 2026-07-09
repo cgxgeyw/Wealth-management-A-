@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   addWatchlistItem,
+  createAnalysisTask,
   createDataSnapshot,
   deleteWatchlistItem,
   fetchDragonTiger,
@@ -22,6 +23,7 @@ import {
   fetchStockIndicators,
   fetchWatchlist,
   reorderWatchlist,
+  type AnalysisTask,
   type AnnouncementResponse,
   type DragonTigerResponse,
   type FinancialStatementResponse,
@@ -384,6 +386,7 @@ export function DataAnalysisPage() {
   const [macroCpi, setMacroCpi] = useState<MacroIndicatorResponse | null>(null);
   const [macroPmi, setMacroPmi] = useState<MacroIndicatorResponse | null>(null);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
+  const [latestTask, setLatestTask] = useState<AnalysisTask | null>(null);
   const [newsPage, setNewsPage] = useState(0);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -559,6 +562,53 @@ export function DataAnalysisPage() {
       setSnapshotId(snapshot.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "生成数据快照失败");
+    }
+  }
+
+  async function runAnalysisTask(kind: "technical" | "news" | "capital_flow" | "standard") {
+    setLoadingDetail(true);
+    setError("");
+    const taskMap = {
+      technical: {
+        mode: "technical",
+        query: `分析 ${symbol} 的技术面结构，重点关注趋势、量价和指标。`,
+        agent_keys: ["data_steward", "technical", "risk"],
+        include_report: false
+      },
+      news: {
+        mode: "news",
+        query: `分析 ${symbol} 的近期新闻、公告和研报观点。`,
+        agent_keys: ["news", "risk"],
+        include_report: false
+      },
+      capital_flow: {
+        mode: "capital_flow",
+        query: `分析 ${symbol} 的资金流、北向、龙虎榜和两融变化。`,
+        agent_keys: ["capital_flow", "risk"],
+        include_report: false
+      },
+      standard: {
+        mode: "standard",
+        query: `生成 ${symbol} 的标准 A 股投研分析报告。`,
+        agent_keys: ["data_steward", "technical", "news", "fundamental", "capital_flow", "risk", "research_director"],
+        include_report: true
+      }
+    }[kind];
+    try {
+      const task = await createAnalysisTask({
+        symbol,
+        period,
+        limit: 80,
+        ...taskMap
+      });
+      setLatestTask(task);
+      if (task.snapshot_id) {
+        setSnapshotId(task.snapshot_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "分析任务创建失败");
+    } finally {
+      setLoadingDetail(false);
     }
   }
 
@@ -813,11 +863,18 @@ export function DataAnalysisPage() {
           </Panel>
           <Panel title="分析入口">
             <div className="button-stack">
-              <button className="btn btn-primary" type="button">运行技术面 Agent</button>
-              <button className="btn btn-secondary" type="button">运行新闻 Agent</button>
-              <button className="btn btn-secondary" type="button">运行资金流 Agent</button>
-              <button className="btn btn-secondary" type="button">生成历史对比</button>
+              <button className="btn btn-primary" disabled={loadingDetail} onClick={() => runAnalysisTask("technical")} type="button">运行技术面 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("news")} type="button">运行新闻 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("capital_flow")} type="button">运行资金流 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("standard")} type="button">生成标准报告</button>
             </div>
+            {latestTask ? (
+              <div className="task-mini">
+                <span>最新任务</span>
+                <strong className="mono">{latestTask.task_key}</strong>
+                <small>{latestTask.status} · {latestTask.stage} · {latestTask.progress}%</small>
+              </div>
+            ) : null}
           </Panel>
         </aside>
       </div>

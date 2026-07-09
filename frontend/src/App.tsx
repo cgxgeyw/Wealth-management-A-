@@ -14,9 +14,13 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  createAgentRun,
+  analysisTaskReportDownloadUrl,
+  createAnalysisTask,
   createKnowledgeBase,
   deleteKnowledgeDocument,
+  fetchAnalysisTaskReport,
+  fetchAnalysisTasks,
+  fetchAgentRun,
   fetchAgentRuns,
   fetchAgentVersions,
   fetchAgentTools,
@@ -48,6 +52,8 @@ import {
   type AgentTestRunResponse,
   type AgentToolRunResponse,
   type AgentToolSpec,
+  type AnalysisTask,
+  type AnalysisTaskReportResponse,
   type DataSnapshot,
   type HealthResponse,
   type KnowledgeBase,
@@ -184,7 +190,7 @@ function ChatAnalysisPage() {
     setRunning(true);
     setMessage("");
     try {
-      const result = await createAgentRun({
+      const task = await createAnalysisTask({
         symbol,
         query,
         mode: "analysis",
@@ -192,10 +198,14 @@ function ChatAnalysisPage() {
         limit: 60,
         include_report: includeReport
       });
+      const result = task.run_key ? await fetchAgentRun(task.run_key) : null;
+      if (!result) {
+        throw new Error("分析任务未生成运行记录");
+      }
       setLatestRun(result);
       await openSnapshot(result.snapshot_id);
       await loadRuns();
-      setMessage("Agent 编排完成");
+      setMessage(`分析任务 ${task.task_key} 已完成`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Agent 编排失败");
     } finally {
@@ -1285,19 +1295,28 @@ function escapeSeparatorForInput(value: string): string {
 }
 
 function TasksReportsPage() {
-  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [tasks, setTasks] = useState<AnalysisTask[]>([]);
   const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null);
+  const [selectedTask, setSelectedTask] = useState<AnalysisTask | null>(null);
   const [snapshotDetail, setSnapshotDetail] = useState<DataSnapshot | null>(null);
+  const [reportDetail, setReportDetail] = useState<AnalysisTaskReportResponse | null>(null);
+  const [taskSymbol, setTaskSymbol] = useState("300750");
+  const [taskQuery, setTaskQuery] = useState("生成标准 A 股投研分析报告。");
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  async function loadRuns() {
-    const result = await fetchAgentRuns(30);
-    setRuns(result.items);
-    setSelectedRun((current) => current ?? result.items[0] ?? null);
+  async function loadTasks() {
+    const result = await fetchAnalysisTasks(30);
+    setTasks(result.items);
+    const nextTask = selectedTask ?? result.items[0] ?? null;
+    setSelectedTask(nextTask);
+    if (nextTask?.run_key) {
+      await openTask(nextTask);
+    }
   }
 
   useEffect(() => {
-    loadRuns().catch((err: unknown) => {
+    loadTasks().catch((err: unknown) => {
       setMessage(err instanceof Error ? err.message : "任务加载失败");
     });
   }, []);
@@ -1309,6 +1328,67 @@ function TasksReportsPage() {
       });
     }
   }, [selectedRun?.snapshot_id]);
+
+  async function openTask(task: AnalysisTask) {
+    setSelectedTask(task);
+    setTaskSymbol(task.symbol);
+    setTaskQuery(task.query || "生成标准 A 股投研分析报告。");
+    setReportDetail(null);
+    try {
+      if (task.run_key) {
+        const run = await fetchAgentRun(task.run_key);
+        setSelectedRun(run);
+        if (run.snapshot_id) {
+          await openSnapshot(run.snapshot_id);
+        }
+      } else {
+        setSelectedRun(null);
+        setSnapshotDetail(null);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "运行详情加载失败");
+    }
+  }
+
+  async function startStandardTask() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const task = await createAnalysisTask({
+        symbol: taskSymbol,
+        query: taskQuery,
+        mode: "standard",
+        period: "daily",
+        limit: 80,
+        include_report: true
+      });
+      await loadTasks();
+      await openTask(task);
+      setMessage(`分析任务 ${task.task_key} 已完成`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "分析任务创建失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openReport(task: AnalysisTask) {
+    if (!task.report_path) {
+      setMessage("该任务还没有生成 Markdown 报告");
+      return;
+    }
+    try {
+      const report = await fetchAnalysisTaskReport(task.task_key);
+      setReportDetail(report);
+      setSelectedTask(task);
+      if (task.run_key) {
+        const run = await fetchAgentRun(task.run_key);
+        setSelectedRun(run);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "报告读取失败");
+    }
+  }
 
   async function openSnapshot(snapshotId: number) {
     if (!snapshotId) {
@@ -1325,29 +1405,43 @@ function TasksReportsPage() {
     <div className="page-grid reports-layout">
       <div className="main-column">
         {message ? <div className="notice">{message}</div> : null}
-        <Panel title="任务队列" actions={<button className="btn btn-primary" onClick={loadRuns} type="button">刷新</button>}>
+        <Panel
+          title="分析任务队列"
+          actions={
+            <>
+              <button className="btn btn-secondary" disabled={loading} onClick={loadTasks} type="button">刷新</button>
+              <button className="btn btn-primary" disabled={loading} onClick={startStandardTask} type="button">{loading ? "运行中" : "新建标准任务"}</button>
+            </>
+          }
+        >
+          <div className="form-grid two">
+            <label>标的代码<input className="input mono" value={taskSymbol} onChange={(event) => setTaskSymbol(event.target.value)} /></label>
+            <label>任务问题<input className="input" value={taskQuery} onChange={(event) => setTaskQuery(event.target.value)} /></label>
+          </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>ID</th><th>标的</th><th>模式</th><th>状态</th><th>创建时间</th><th>步骤</th><th>快照</th></tr></thead>
+              <thead><tr><th>任务</th><th>标的</th><th>模式</th><th>状态</th><th>阶段</th><th>进度</th><th>快照</th></tr></thead>
               <tbody>
-                {runs.map((run) => (
-                  <tr key={run.run_key}>
-                    <td className="mono">{run.run_key}</td>
-                    <td>{run.symbol}</td>
-                    <td>{run.mode}</td>
-                    <td><StatusBadge tone={run.status === "completed" ? "green" : run.status === "partial" ? "amber" : "red"}>{run.status}</StatusBadge></td>
-                    <td>{formatDateTime(run.created_at)}</td>
-                    <td className="mono">{run.steps.length}</td>
+                {tasks.map((task) => (
+                  <tr className={selectedTask?.task_key === task.task_key ? "row-active" : ""} key={task.task_key} onClick={() => openTask(task)}>
+                    <td className="mono">{task.task_key}</td>
+                    <td>{task.symbol}</td>
+                    <td>{task.mode}</td>
+                    <td><StatusBadge tone={task.status === "completed" ? "green" : task.status === "running" ? "amber" : "red"}>{task.status}</StatusBadge></td>
+                    <td>{task.stage}</td>
                     <td>
-                      <button className="btn btn-table" onClick={() => { setSelectedRun(run); openSnapshot(run.snapshot_id); }} type="button">
-                        #{run.snapshot_id}
+                      <div className="progress-cell"><span style={{ width: `${task.progress}%` }} /></div>
+                    </td>
+                    <td>
+                      <button className="btn btn-table" disabled={!task.snapshot_id} onClick={(event) => { event.stopPropagation(); task.snapshot_id && openSnapshot(task.snapshot_id); }} type="button">
+                        {task.snapshot_id ? `#${task.snapshot_id}` : "-"}
                       </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {runs.length === 0 ? <div className="empty-hint">暂无 Agent 运行记录</div> : null}
+            {tasks.length === 0 ? <div className="empty-hint">暂无分析任务</div> : null}
           </div>
         </Panel>
 
@@ -1365,6 +1459,13 @@ function TasksReportsPage() {
                 </div>
                 <StatusBadge tone={Number(selectedRun.result.confidence ?? 0) >= 80 ? "green" : "amber"}>置信度 {String(selectedRun.result.confidence ?? 0)}%</StatusBadge>
               </div>
+              {selectedTask ? (
+                <div className="task-summary">
+                  <div><span>任务编号</span><strong className="mono">{selectedTask.task_key}</strong></div>
+                  <div><span>状态阶段</span><strong>{selectedTask.status} · {selectedTask.stage}</strong></div>
+                  <div><span>报告文件</span><strong>{selectedTask.report_path ? "Markdown 已生成" : "未生成"}</strong></div>
+                </div>
+              ) : null}
               <div className="reference-list">
                 {selectedRun.steps.map((step) => (
                   <button key={`${selectedRun.run_key}-${step.agent_key}-${step.tool_key}`} type="button">
@@ -1372,6 +1473,15 @@ function TasksReportsPage() {
                   </button>
                 ))}
               </div>
+              {reportDetail ? (
+                <div className="report-preview">
+                  <div className="snapshot-head">
+                    <strong>Markdown 预览</strong>
+                    <a className="link-button mono" href={analysisTaskReportDownloadUrl(reportDetail.task_key)}>下载</a>
+                  </div>
+                  <pre>{reportDetail.content}</pre>
+                </div>
+              ) : null}
               <SnapshotDetail snapshot={snapshotDetail} />
             </>
           ) : <div className="empty-hint">选择一个运行记录查看详情</div>}
@@ -1379,17 +1489,17 @@ function TasksReportsPage() {
       </div>
 
       <Panel title="报告归档">
-        {runs.slice(0, 8).map((item) => (
-          <div className="archive-row" key={item.run_key}>
+        {tasks.filter((item) => item.report_path).slice(0, 8).map((item) => (
+          <div className="archive-row" key={item.task_key}>
             <strong>{item.symbol} {item.mode}</strong>
-            <span>{formatDateTime(item.created_at)} · {item.status}</span>
+            <span>{formatDateTime(item.created_at)} · {item.status} · snapshot #{item.snapshot_id || "-"}</span>
             <div>
-              <button className="btn btn-secondary" type="button">Markdown</button>
-              <button className="btn btn-secondary" type="button">PDF</button>
+              <button className="btn btn-secondary" onClick={() => openReport(item)} type="button">Markdown</button>
+              <button className="btn btn-secondary" disabled type="button">PDF</button>
             </div>
           </div>
         ))}
-        {runs.length === 0 ? <div className="empty-hint">生成报告后会出现在这里</div> : null}
+        {tasks.filter((item) => item.report_path).length === 0 ? <div className="empty-hint">生成报告后会出现在这里</div> : null}
       </Panel>
     </div>
   );

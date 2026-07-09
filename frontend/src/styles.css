@@ -535,6 +535,10 @@ tbody tr:hover,
   background: #f1f5f9;
 }
 
+tbody tr.row-active {
+  background: #eef4ff;
+}
+
 .dragging-row {
   opacity: 0.58;
   outline: 1px dashed var(--border-strong);
@@ -1592,6 +1596,66 @@ tbody tr:hover,
 .report-block p {
   margin: 0;
   color: var(--muted);
+}
+
+.task-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.task-summary div,
+.task-mini {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 9px;
+  background: var(--panel);
+}
+
+.task-summary span,
+.task-mini span,
+.task-mini small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.progress-cell {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--panel-muted);
+}
+
+.progress-cell span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.report-preview {
+  display: grid;
+  gap: 8px;
+  margin: 0 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--panel);
+}
+
+.report-preview pre {
+  max-height: 340px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .archive-row {

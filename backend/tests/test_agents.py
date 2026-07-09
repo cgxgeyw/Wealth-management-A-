@@ -34,6 +34,7 @@ from app.schemas.data_source import (
     SectorSnapshotResponse,
     DataSnapshotRead,
 )
+from app.schemas.agent_run import AgentRunRead
 
 
 def fake_snapshot(snapshot_id: int = 901) -> DataSnapshotRead:
@@ -45,6 +46,67 @@ def fake_snapshot(snapshot_id: int = 901) -> DataSnapshotRead:
         snapshot_json='{"symbol":"300750","warnings":[]}',
         created_at=datetime.now(),
     )
+
+
+def test_analysis_task_lifecycle_and_report(monkeypatch, tmp_path) -> None:
+    report_path = tmp_path / "analysis-report.md"
+    report_path.write_text("# 测试报告\n\n- 已生成\n", encoding="utf-8")
+
+    def fake_create_agent_run(db, payload) -> AgentRunRead:
+        return AgentRunRead(
+            id=42,
+            run_key="AR-PYTEST",
+            symbol=payload.symbol,
+            query=payload.query,
+            mode=payload.mode,
+            status="completed",
+            snapshot_id=902,
+            agent_keys=payload.agent_keys,
+            steps=[
+                {
+                    "agent_key": "research_director",
+                    "agent_name": "投研总监",
+                    "tool_key": "document.write",
+                    "status": "success",
+                    "params": {},
+                    "output_preview": {"summary": "document 20 chars", "path": str(report_path)},
+                    "error": "",
+                }
+            ],
+            result={"conclusion": "测试完成"},
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+    monkeypatch.setattr("app.services.analysis_tasks.create_agent_run", fake_create_agent_run)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/analysis-tasks",
+            json={
+                "symbol": "300750",
+                "query": "生成测试报告",
+                "agent_keys": ["research_director"],
+                "include_report": True,
+            },
+        )
+        task_key = created.json()["task_key"]
+        listed = client.get("/api/analysis-tasks?limit=5")
+        detail = client.get(f"/api/analysis-tasks/{task_key}")
+        report = client.get(f"/api/analysis-tasks/{task_key}/report")
+        download = client.get(f"/api/analysis-tasks/{task_key}/report/download")
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed"
+    assert created.json()["run_key"] == "AR-PYTEST"
+    assert created.json()["snapshot_id"] == 902
+    assert created.json()["report_format"] == "markdown"
+    assert listed.status_code == 200
+    assert any(item["task_key"] == task_key for item in listed.json()["items"])
+    assert detail.status_code == 200
+    assert report.status_code == 200
+    assert "测试报告" in report.json()["content"]
+    assert download.status_code == 200
 
 
 def test_agent_config_update_render_and_rollback() -> None:

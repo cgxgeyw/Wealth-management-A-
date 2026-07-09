@@ -151,6 +151,35 @@ export interface AgentRunCreatePayload {
   include_report?: boolean;
 }
 
+export interface AnalysisTask {
+  id: number;
+  task_key: string;
+  symbol: string;
+  query: string;
+  mode: string;
+  status: string;
+  stage: string;
+  progress: number;
+  agent_keys: string[];
+  run_key: string;
+  snapshot_id: number;
+  report_path: string;
+  report_format: string;
+  error_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnalysisTaskListResponse {
+  items: AnalysisTask[];
+}
+
+export interface AnalysisTaskReportResponse {
+  task_key: string;
+  report_path: string;
+  content: string;
+}
+
 export interface KnowledgeDocument {
   id: number;
   knowledge_base_id: number;
@@ -847,6 +876,22 @@ export function fetchAgentRuns(limit = 20): Promise<AgentRunListResponse> {
 
 export function fetchAgentRun(runKey: string): Promise<AgentRun> {
   return getJson<AgentRun>(`/api/agent-runs/${encodeURIComponent(runKey)}`);
+}
+
+export function createAnalysisTask(payload: AgentRunCreatePayload): Promise<AnalysisTask> {
+  return postJson<AnalysisTask>("/api/analysis-tasks", payload);
+}
+
+export function fetchAnalysisTasks(limit = 30): Promise<AnalysisTaskListResponse> {
+  return getJson<AnalysisTaskListResponse>(`/api/analysis-tasks?limit=${limit}`);
+}
+
+export function fetchAnalysisTaskReport(taskKey: string): Promise<AnalysisTaskReportResponse> {
+  return getJson<AnalysisTaskReportResponse>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}/report`);
+}
+
+export function analysisTaskReportDownloadUrl(taskKey: string): string {
+  return `/api/analysis-tasks/${encodeURIComponent(taskKey)}/report/download`;
 }
 
 export function fetchKnowledgeBases(): Promise<KnowledgeBaseListResponse> {
