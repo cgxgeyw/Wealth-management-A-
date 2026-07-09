@@ -32,6 +32,7 @@ class AgentRunRead(BaseModel):
     query: str
     mode: str
     status: str
+    snapshot_id: int = 0
     agent_keys: list[str]
     steps: list[AgentRunStep]
     result: dict[str, Any]

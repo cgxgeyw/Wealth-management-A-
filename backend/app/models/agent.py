@@ -54,6 +54,7 @@ class AgentRun(Base):
     query: Mapped[str] = mapped_column(Text, default="")
     mode: Mapped[str] = mapped_column(String(80), default="analysis")
     status: Mapped[str] = mapped_column(String(40), default="created")
+    snapshot_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
     agent_keys_json: Mapped[str] = mapped_column(Text, default="[]")
     steps_json: Mapped[str] = mapped_column(Text, default="[]")
     result_json: Mapped[str] = mapped_column(Text, default="{}")

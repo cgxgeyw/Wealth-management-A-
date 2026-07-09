@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 from fastapi.testclient import TestClient
 
@@ -31,7 +32,19 @@ from app.schemas.data_source import (
     ResearchReportResponse,
     SectorSnapshotItem,
     SectorSnapshotResponse,
+    DataSnapshotRead,
 )
+
+
+def fake_snapshot(snapshot_id: int = 901) -> DataSnapshotRead:
+    return DataSnapshotRead(
+        id=snapshot_id,
+        symbol="300750",
+        period="daily",
+        snapshot_type="analysis_context",
+        snapshot_json='{"symbol":"300750","warnings":[]}',
+        created_at=datetime.now(),
+    )
 
 
 def test_agent_config_update_render_and_rollback() -> None:
@@ -475,6 +488,7 @@ def test_agent_run_orchestrates_allowed_tools(monkeypatch) -> None:
         return {"ok": True}
 
     monkeypatch.setattr("app.services.agent_orchestrator.execute_tool", fake_execute_tool)
+    monkeypatch.setattr("app.services.agent_orchestrator.create_analysis_snapshot", lambda *args, **kwargs: fake_snapshot())
 
     with TestClient(app) as client:
         client.patch(
@@ -503,6 +517,8 @@ def test_agent_run_orchestrates_allowed_tools(monkeypatch) -> None:
 
     assert body["status"] == "completed"
     assert body["symbol"] == "300750"
+    assert body["snapshot_id"] == 901
+    assert body["result"]["snapshot_id"] == 901
     assert body["agent_keys"] == ["technical"]
     assert [step["tool_key"] for step in body["steps"]] == ["stock.quote", "stock.indicators"]
     assert body["result"]["tool_success_count"] == 2
@@ -528,6 +544,7 @@ def test_agent_run_uses_llm_result_when_configured(monkeypatch) -> None:
         }
 
     monkeypatch.setattr("app.services.agent_orchestrator.execute_tool", fake_execute_tool)
+    monkeypatch.setattr("app.services.agent_orchestrator.create_analysis_snapshot", lambda *args, **kwargs: fake_snapshot(902))
     monkeypatch.setattr("app.services.llm_client.settings.llm_api_key", "test-key")
     monkeypatch.setattr("app.services.llm_client.settings.llm_model", "test-model")
     monkeypatch.setattr("app.services.llm_client._call_chat_completion", fake_call_chat_completion)
@@ -548,6 +565,7 @@ def test_agent_run_uses_llm_result_when_configured(monkeypatch) -> None:
 
     assert created.status_code == 200
     result = created.json()["result"]
+    assert created.json()["snapshot_id"] == 902
     assert result["conclusion"] == "模型结论：谨慎观察"
     assert result["model_status"] == "llm_completed"
     assert result["model"] == "test-model"

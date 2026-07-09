@@ -7,12 +7,14 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models.agent import AgentConfig, AgentRun
+from app.schemas.data_source import DataSnapshotCreateRequest
 from app.schemas.agent_run import AgentRunCreateRequest, AgentRunRead, AgentRunStep
 from app.services.agent_tools import AgentToolError, execute_tool, get_tool_spec
+from app.services.data_snapshots import create_analysis_snapshot, snapshot_brief
 from app.services.llm_client import generate_run_conclusion
 from app.services.stock_catalog import get_stock_profile
 
@@ -30,12 +32,20 @@ DEFAULT_AGENT_PIPELINE = [
 
 
 def create_agent_run(db: Session, payload: AgentRunCreateRequest) -> AgentRunRead:
+    ensure_agent_run_schema(db)
     symbol = _normalize_symbol(payload.symbol)
     agents = _select_agents(db, payload.agent_keys)
     run_key = f"AR-{datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
     steps: list[AgentRunStep] = []
     agent_summaries: list[dict[str, Any]] = []
-    variables = _build_variables(symbol, payload)
+    snapshot = create_analysis_snapshot(
+        db,
+        DataSnapshotCreateRequest(symbol=symbol, period=payload.period, limit=payload.limit, news_limit=10),
+        query=payload.query,
+        include_knowledge=True,
+    )
+    snapshot_summary = snapshot_brief(snapshot)
+    variables = _build_variables(symbol, payload, snapshot_summary)
 
     for agent in agents:
         agent_steps: list[AgentRunStep] = []
@@ -72,12 +82,15 @@ def create_agent_run(db: Session, payload: AgentRunCreateRequest) -> AgentRunRea
     if not steps:
         status = "no_tools"
     result = _build_result(symbol, payload, agent_summaries, steps)
+    result["snapshot_id"] = snapshot.id
+    result["snapshot_summary"] = snapshot_summary
     run = AgentRun(
         run_key=run_key,
         symbol=symbol,
         query=payload.query,
         mode=payload.mode,
         status=status,
+        snapshot_id=snapshot.id,
         agent_keys_json=json.dumps([agent.key for agent in agents], ensure_ascii=False),
         steps_json=json.dumps([step.model_dump(mode="json") for step in steps], ensure_ascii=False),
         result_json=json.dumps(result, ensure_ascii=False),
@@ -96,6 +109,7 @@ def agent_run_read(run: AgentRun) -> AgentRunRead:
         query=run.query,
         mode=run.mode,
         status=run.status,
+        snapshot_id=run.snapshot_id,
         agent_keys=_json_list(run.agent_keys_json),
         steps=[AgentRunStep(**item) for item in _json_list_of_dict(run.steps_json)],
         result=_json_dict(run.result_json),
@@ -111,6 +125,14 @@ def _select_agents(db: Session, agent_keys: list[str]) -> list[AgentConfig]:
     return [by_key[key] for key in requested if key in by_key]
 
 
+def ensure_agent_run_schema(db: Session) -> None:
+    AgentRun.__table__.create(bind=db.get_bind(), checkfirst=True)
+    existing = {row[1] for row in db.execute(text("PRAGMA table_info(agent_runs)")).all()}
+    if "snapshot_id" not in existing:
+        db.execute(text("ALTER TABLE agent_runs ADD COLUMN snapshot_id INTEGER DEFAULT 0"))
+        db.commit()
+
+
 def _normalize_symbol(symbol: str) -> str:
     return symbol.strip().lower().removeprefix("sh").removeprefix("sz").removeprefix("bj")
 
@@ -119,13 +141,14 @@ def _agent_tools(agent: AgentConfig) -> list[str]:
     return _json_list(agent.tools_json)
 
 
-def _build_variables(symbol: str, payload: AgentRunCreateRequest) -> dict[str, str]:
+def _build_variables(symbol: str, payload: AgentRunCreateRequest, snapshot_summary: str = "") -> dict[str, str]:
     profile = get_stock_profile(symbol)
     values = {
         "stock_code": symbol,
         "stock_name": profile.name if profile else symbol,
         "period": payload.period,
         "query": payload.query,
+        "snapshot_summary": snapshot_summary,
     }
     values.update(payload.variables)
     return values

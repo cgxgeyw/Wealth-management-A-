@@ -241,6 +241,7 @@ function ChatAnalysisPage() {
           <div><span className="label">结构化结论</span><strong>{String(latestRun?.result.conclusion ?? "等待运行 Agent 编排")}</strong></div>
           <StatusBadge tone={confidence >= 80 ? "green" : confidence >= 50 ? "amber" : "red"}>置信度 {confidence}%</StatusBadge>
           <p>成功工具 {String(latestRun?.result.tool_success_count ?? 0)} 个，失败工具 {String(latestRun?.result.tool_failed_count ?? 0)} 个。当前结论来自工具编排层，模型研讨层待接入。</p>
+          {latestRun ? <small className="mono">snapshot #{latestRun.snapshot_id} · {String(latestRun.result.snapshot_summary ?? "")}</small> : null}
         </div>
         <div className="composer">
           <input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
@@ -253,6 +254,7 @@ function ChatAnalysisPage() {
         <div className="kv-list">
           <div><span>股票</span><strong>{latestRun?.symbol ?? symbol}</strong></div>
           <div><span>运行编号</span><strong className="mono">{latestRun?.run_key ?? "未创建"}</strong></div>
+          <div><span>数据快照</span><strong className="mono">{latestRun ? `#${latestRun.snapshot_id}` : "未创建"}</strong></div>
           <div><span>状态</span><strong>{latestRun?.status ?? "idle"}</strong></div>
         </div>
         <div className="reference-list">
@@ -1181,7 +1183,7 @@ function TasksReportsPage() {
                     <td><StatusBadge tone={run.status === "completed" ? "green" : run.status === "partial" ? "amber" : "red"}>{run.status}</StatusBadge></td>
                     <td>{formatDateTime(run.created_at)}</td>
                     <td className="mono">{run.steps.length}</td>
-                    <td><button className="btn btn-table" onClick={() => setSelectedRun(run)} type="button">打开</button></td>
+                    <td><button className="btn btn-table" onClick={() => setSelectedRun(run)} type="button">#{run.snapshot_id}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -1198,6 +1200,7 @@ function TasksReportsPage() {
                   <span className="label">最终结论</span>
                   <h3>{selectedRun.symbol}：{String(selectedRun.result.conclusion ?? "工具编排完成")}</h3>
                   <p>成功工具 {String(selectedRun.result.tool_success_count ?? 0)} 个，失败工具 {String(selectedRun.result.tool_failed_count ?? 0)} 个。运行编号 {selectedRun.run_key}。</p>
+                  <small className="mono">snapshot #{selectedRun.snapshot_id} · {String(selectedRun.result.snapshot_summary ?? "")}</small>
                 </div>
                 <StatusBadge tone={Number(selectedRun.result.confidence ?? 0) >= 80 ? "green" : "amber"}>置信度 {String(selectedRun.result.confidence ?? 0)}%</StatusBadge>
               </div>

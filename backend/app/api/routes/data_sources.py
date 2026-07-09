@@ -48,6 +48,7 @@ from app.services.data_fetcher import (
     get_market_news,
     get_realtime_quote,
 )
+from app.services.data_snapshots import create_analysis_snapshot
 from app.services.scheduler import TASKS, last_run_by_task, list_task_runs, run_task_once
 from app.services.technical_indicators import calculate_indicators
 
@@ -405,33 +406,7 @@ def create_snapshot(
     payload: DataSnapshotCreateRequest,
     db: Session = Depends(get_db),
 ) -> DataSnapshotRead:
-    symbol = _normalize_symbol(payload.symbol)
-    try:
-        quote = get_realtime_quote(db, symbol)
-        kline = get_klines(db, symbol=symbol, period=payload.period, limit=payload.limit)
-        indicators = calculate_indicators(kline, ["ma", "macd", "rsi", "kdj", "boll"])
-        news = get_market_news(db, limit=payload.news_limit)
-    except DataFetchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    snapshot_payload = {
-        "symbol": symbol,
-        "period": payload.period,
-        "quote": quote.model_dump(mode="json"),
-        "kline": kline.model_dump(mode="json"),
-        "indicators": indicators.model_dump(mode="json"),
-        "market_news": news.model_dump(mode="json"),
-    }
-    snapshot = DataSnapshot(
-        symbol=symbol,
-        period=payload.period,
-        snapshot_type="analysis_context",
-        snapshot_json=json.dumps(snapshot_payload, ensure_ascii=False),
-    )
-    db.add(snapshot)
-    db.commit()
-    db.refresh(snapshot)
-    return DataSnapshotRead.model_validate(snapshot)
+    return create_analysis_snapshot(db, payload)
 
 
 @router.get("/snapshots", response_model=DataSnapshotListResponse)

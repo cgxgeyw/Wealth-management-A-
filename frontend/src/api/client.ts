@@ -128,6 +128,7 @@ export interface AgentRun {
   query: string;
   mode: string;
   status: string;
+  snapshot_id: number;
   agent_keys: string[];
   steps: AgentRunStep[];
   result: Record<string, unknown>;
