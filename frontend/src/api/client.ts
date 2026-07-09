@@ -924,6 +924,39 @@ export async function uploadKnowledgeDocument(
   return response.json() as Promise<KnowledgeDocumentDetail>;
 }
 
+export async function queueKnowledgeDocumentImport(
+  file: File,
+  options: KnowledgeUploadOptions = {}
+): Promise<KnowledgeImportTask> {
+  const body = new FormData();
+  body.append("file", file);
+  const params = new URLSearchParams();
+  if (options.knowledge_base_id) {
+    params.set("knowledge_base_id", String(options.knowledge_base_id));
+  }
+  if (options.chunking_strategy) {
+    params.set("chunking_strategy", options.chunking_strategy);
+  }
+  if (options.chunk_size) {
+    params.set("chunk_size", String(options.chunk_size));
+  }
+  if (options.chunk_overlap !== undefined) {
+    params.set("chunk_overlap", String(options.chunk_overlap));
+  }
+  if (options.separators?.length) {
+    params.set("separators", options.separators.join("|"));
+  }
+  const suffix = params.toString() ? `?${params}` : "";
+  const response = await fetch(`/api/knowledge/documents/import${suffix}`, {
+    method: "POST",
+    body
+  });
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  return response.json() as Promise<KnowledgeImportTask>;
+}
+
 export function updateKnowledgeChunk(
   chunkId: number,
   payload: KnowledgeChunkUpdatePayload

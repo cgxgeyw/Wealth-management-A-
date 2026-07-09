@@ -27,6 +27,7 @@ import {
   fetchKnowledgeFaissStatus,
   fetchKnowledgeDocuments,
   fetchKnowledgeImportTasks,
+  queueKnowledgeDocumentImport,
   reindexAllKnowledgeDocuments,
   reindexKnowledgeDocument,
   rechunkKnowledgeDocument,
@@ -39,7 +40,6 @@ import {
   updateAgent,
   updateKnowledgeBase,
   updateKnowledgeChunk,
-  uploadKnowledgeDocument,
   type AgentConfig,
   type AgentPromptVersion,
   type AgentRenderResponse,
@@ -615,6 +615,21 @@ function KnowledgeBasePage() {
     });
   }, []);
 
+  useEffect(() => {
+    const hasRunningTask = importTasks.some((task) => task.status === "queued" || task.status === "processing");
+    if (!hasRunningTask) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      loadImportTasks(selectedBaseId)
+        .then(() => loadDocuments(docQuery, selectedBaseId))
+        .catch((err: unknown) => {
+          setMessage(err instanceof Error ? err.message : "导入任务刷新失败");
+        });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [docQuery, importTasks, selectedBaseId]);
+
   async function switchKnowledgeBase(nextBaseId: number) {
     const nextBase = knowledgeBases.find((item) => item.id === nextBaseId);
     setSelectedBaseId(nextBaseId);
@@ -685,9 +700,9 @@ function KnowledgeBasePage() {
     }
     setUploadingFiles(true);
     try {
-      const uploaded: KnowledgeDocumentDetail[] = [];
+      const queued: KnowledgeImportTask[] = [];
       for (const file of selectedFiles) {
-        uploaded.push(await uploadKnowledgeDocument(file, {
+        queued.push(await queueKnowledgeDocumentImport(file, {
           knowledge_base_id: selectedBaseId,
           chunking_strategy: chunkingStrategy,
           chunk_size: chunkSize,
@@ -695,10 +710,7 @@ function KnowledgeBasePage() {
           separators: parseSeparators(separatorsText)
         }));
       }
-      const latest = uploaded[uploaded.length - 1];
-      setMessage(`已导入 ${uploaded.length} 个文件，最新文档：${latest.title}`);
-      setSelectedDocument(latest);
-      setSearchQuery(latest.title);
+      setMessage(`已提交 ${queued.length} 个导入任务，后台正在解析和索引`);
       setSelectedFiles([]);
       await loadDocuments("", selectedBaseId);
       await loadKnowledgeBases(selectedBaseId);

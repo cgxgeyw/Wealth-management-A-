@@ -12,6 +12,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.knowledge import (
     KnowledgeBase,
     KnowledgeChunk,
@@ -171,6 +172,14 @@ def list_import_tasks(
     return KnowledgeImportTaskListResponse(items=[import_task_read(item) for item in tasks])
 
 
+def get_import_task(db: Session, task_id: int) -> KnowledgeImportTaskRead | None:
+    ensure_knowledge_fts(db)
+    task = db.get(KnowledgeImportTask, task_id)
+    if not task:
+        return None
+    return import_task_read(task)
+
+
 def import_task_read(task: KnowledgeImportTask) -> KnowledgeImportTaskRead:
     return KnowledgeImportTaskRead(
         id=task.id,
@@ -187,6 +196,93 @@ def import_task_read(task: KnowledgeImportTask) -> KnowledgeImportTaskRead:
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+
+
+def create_import_task(
+    db: Session,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    knowledge_base_id: int = 1,
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: list[str] | None = None,
+) -> KnowledgeImportTaskRead:
+    ensure_knowledge_fts(db)
+    knowledge_base = db.get(KnowledgeBase, knowledge_base_id) or _ensure_default_knowledge_base(db)
+    task = _create_import_task_row(
+        db,
+        knowledge_base=knowledge_base,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        chunking_strategy=chunking_strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=separators,
+        status="queued",
+        stage="queued",
+        message="等待后台导入",
+    )
+    return import_task_read(task)
+
+
+def process_import_task(
+    task_id: int,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    knowledge_base_id: int = 1,
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: list[str] | None = None,
+) -> None:
+    with SessionLocal() as db:
+        ensure_knowledge_fts(db)
+        task = db.get(KnowledgeImportTask, task_id)
+        if not task:
+            return
+        knowledge_base = db.get(KnowledgeBase, knowledge_base_id) or _ensure_default_knowledge_base(db)
+        task.status = "processing"
+        task.stage = "parse"
+        task.message = "正在解析文件"
+        db.add(task)
+        db.commit()
+        try:
+            parsed = _parse_uploaded_file(filename, content_type, data)
+            task.stage = "index"
+            task.message = "正在分块和索引"
+            db.add(task)
+            db.commit()
+            document = _create_document_from_parsed_upload(
+                db,
+                task=task,
+                knowledge_base=knowledge_base,
+                filename=filename,
+                parsed=parsed,
+                chunking_strategy=chunking_strategy,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=separators,
+            )
+            task.document_id = document.id
+            task.chunk_count = document.chunk_count
+            task.status = "completed"
+            task.stage = "completed"
+            task.message = "导入完成"
+            db.add(task)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            task = db.get(KnowledgeImportTask, task_id)
+            if task:
+                task.status = "failed"
+                task.stage = "failed"
+                task.message = str(exc)
+                db.add(task)
+                db.commit()
 
 
 def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> KnowledgeDocumentDetail:
@@ -235,27 +331,20 @@ def create_document_from_file(
 ) -> KnowledgeDocumentDetail:
     ensure_knowledge_fts(db)
     knowledge_base = db.get(KnowledgeBase, knowledge_base_id) or _ensure_default_knowledge_base(db)
-    task = KnowledgeImportTask(
-        knowledge_base_id=knowledge_base.id,
+    task = _create_import_task_row(
+        db,
+        knowledge_base=knowledge_base,
         filename=filename,
         content_type=content_type,
-        file_size=len(data),
+        data=data,
+        chunking_strategy=chunking_strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=separators,
         status="processing",
         stage="parse",
         message="正在解析文件",
-        metadata_json=json.dumps(
-            {
-                "chunking_strategy": chunking_strategy or knowledge_base.chunking_strategy,
-                "chunk_size": chunk_size or knowledge_base.chunk_size,
-                "chunk_overlap": chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
-                "separators": separators or _json_list(knowledge_base.separators_json),
-            },
-            ensure_ascii=False,
-        ),
     )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
     task_id = task.id
     try:
         parsed = _parse_uploaded_file(filename, content_type, data)
@@ -263,21 +352,17 @@ def create_document_from_file(
         task.message = "正在分块和索引"
         db.add(task)
         db.commit()
-        payload = KnowledgeDocumentCreateRequest(
-            title=parsed["title"],
-            content=parsed["content"],
-            knowledge_base_id=knowledge_base.id,
-            doc_type=parsed["doc_type"],
-            source=f"upload:{filename}",
-            symbols=[],
-            tags=parsed["tags"],
-            metadata={**parsed["metadata"], "import_task_id": task.id},
-            chunking_strategy=chunking_strategy or knowledge_base.chunking_strategy,
-            chunk_size=chunk_size or knowledge_base.chunk_size,
-            chunk_overlap=chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
-            separators=separators or _json_list(knowledge_base.separators_json),
+        document = _create_document_from_parsed_upload(
+            db,
+            task=task,
+            knowledge_base=knowledge_base,
+            filename=filename,
+            parsed=parsed,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=separators,
         )
-        document = create_document(db, payload)
         task.document_id = document.id
         task.chunk_count = document.chunk_count
         task.status = "completed"
@@ -296,6 +381,72 @@ def create_document_from_file(
             db.add(task)
             db.commit()
         raise
+
+
+def _create_import_task_row(
+    db: Session,
+    knowledge_base: KnowledgeBase,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: list[str] | None = None,
+    status: str = "queued",
+    stage: str = "queued",
+    message: str = "",
+) -> KnowledgeImportTask:
+    task = KnowledgeImportTask(
+        knowledge_base_id=knowledge_base.id,
+        filename=filename,
+        content_type=content_type,
+        file_size=len(data),
+        status=status,
+        stage=stage,
+        message=message,
+        metadata_json=json.dumps(
+            {
+                "chunking_strategy": chunking_strategy or knowledge_base.chunking_strategy,
+                "chunk_size": chunk_size or knowledge_base.chunk_size,
+                "chunk_overlap": chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
+                "separators": separators or _json_list(knowledge_base.separators_json),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def _create_document_from_parsed_upload(
+    db: Session,
+    task: KnowledgeImportTask,
+    knowledge_base: KnowledgeBase,
+    filename: str,
+    parsed: dict[str, Any],
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: list[str] | None = None,
+) -> KnowledgeDocumentDetail:
+    payload = KnowledgeDocumentCreateRequest(
+        title=parsed["title"],
+        content=parsed["content"],
+        knowledge_base_id=knowledge_base.id,
+        doc_type=parsed["doc_type"],
+        source=f"upload:{filename}",
+        symbols=[],
+        tags=parsed["tags"],
+        metadata={**parsed["metadata"], "import_task_id": task.id},
+        chunking_strategy=chunking_strategy or knowledge_base.chunking_strategy,
+        chunk_size=chunk_size or knowledge_base.chunk_size,
+        chunk_overlap=chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
+        separators=separators or _json_list(knowledge_base.separators_json),
+    )
+    return create_document(db, payload)
 
 
 def list_documents(

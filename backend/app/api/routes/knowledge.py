@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -17,6 +17,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdateRequest,
     KnowledgeFaissStatus,
     KnowledgeImportTaskListResponse,
+    KnowledgeImportTaskRead,
     KnowledgeReindexAllResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
@@ -25,11 +26,14 @@ from app.services.knowledge_base import (
     create_knowledge_base,
     create_document,
     create_document_from_file,
+    create_import_task,
     delete_document,
     get_document,
+    get_import_task,
     list_import_tasks,
     list_knowledge_bases,
     list_documents,
+    process_import_task,
     rechunk_document,
     reindex_all_documents,
     reindex_document,
@@ -75,6 +79,14 @@ def import_tasks(
     db: Session = Depends(get_db),
 ) -> KnowledgeImportTaskListResponse:
     return list_import_tasks(db, knowledge_base_id=knowledge_base_id, limit=limit)
+
+
+@router.get("/import-tasks/{task_id}", response_model=KnowledgeImportTaskRead)
+def import_task_detail(task_id: int, db: Session = Depends(get_db)) -> KnowledgeImportTaskRead:
+    result = get_import_task(db, task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Knowledge import task not found.")
+    return result
 
 
 @router.get("/documents", response_model=KnowledgeDocumentListResponse)
@@ -124,6 +136,49 @@ async def upload_knowledge_document(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/documents/import", response_model=KnowledgeImportTaskRead)
+async def import_knowledge_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    knowledge_base_id: int = 1,
+    chunking_strategy: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    separators: str = "",
+    db: Session = Depends(get_db),
+) -> KnowledgeImportTaskRead:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    filename = file.filename or "uploaded-document"
+    content_type = file.content_type or "application/octet-stream"
+    parsed_separators = [item.strip() for item in separators.split("|") if item.strip()] if separators else None
+    task = create_import_task(
+        db,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        knowledge_base_id=knowledge_base_id,
+        chunking_strategy=chunking_strategy,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=parsed_separators,
+    )
+    background_tasks.add_task(
+        process_import_task,
+        task.id,
+        filename,
+        content_type,
+        data,
+        knowledge_base_id,
+        chunking_strategy,
+        chunk_size,
+        chunk_overlap,
+        parsed_separators,
+    )
+    return task
 
 
 @router.post("/documents/reindex-all", response_model=KnowledgeReindexAllResponse)

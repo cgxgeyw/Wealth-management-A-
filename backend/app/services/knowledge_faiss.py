@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +16,10 @@ from app.schemas.knowledge import KnowledgeFaissStatus
 
 
 def rebuild_faiss_index(db: Session) -> KnowledgeFaissStatus:
-    faiss, np, message = _load_runtime()
-    index_path, mapping_path = _index_paths()
     if not settings.faiss_enabled:
         return _status(False, False, "FAISS is disabled.")
+    faiss, np, message = _load_runtime()
+    index_path, mapping_path = _index_paths()
     if faiss is None or np is None:
         return _status(True, False, message)
 
@@ -67,6 +68,8 @@ def rebuild_faiss_index(db: Session) -> KnowledgeFaissStatus:
 
 
 def faiss_status() -> KnowledgeFaissStatus:
+    if not settings.faiss_enabled:
+        return _status(False, False, "FAISS is disabled.")
     _, _, message = _load_runtime()
     available = message == "available"
     return _status(settings.faiss_enabled, available, message)
@@ -130,6 +133,8 @@ def _status(enabled: bool, available: bool, message: str) -> KnowledgeFaissStatu
 
 
 def _load_runtime():
+    if os.name == "nt" and os.getenv("FAISS_ALLOW_NATIVE_IMPORT", "").lower() not in {"1", "true", "yes"}:
+        return None, None, "FAISS native import is disabled on Windows. Set FAISS_ALLOW_NATIVE_IMPORT=1 to enable it."
     try:
         faiss = importlib.import_module("faiss")
         np = importlib.import_module("numpy")

@@ -172,6 +172,38 @@ def test_knowledge_upload_failure_records_import_task(monkeypatch) -> None:
         assert "extractable text" in latest["message"]
 
 
+def test_knowledge_async_import_task_completes(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        queued = client.post(
+            "/api/knowledge/documents/import?chunking_strategy=characters&chunk_size=120&chunk_overlap=5",
+            files={
+                "file": (
+                    "异步导入测试.md",
+                    "异步导入会先创建任务，然后后台解析、分块、索引。" * 8,
+                    "text/markdown",
+                )
+            },
+        )
+        assert queued.status_code == 200
+        task = queued.json()
+        assert task["filename"] == "异步导入测试.md"
+        assert task["status"] in ("queued", "processing", "completed")
+
+        detail = client.get(f"/api/knowledge/import-tasks/{task['id']}")
+        assert detail.status_code == 200
+        completed = detail.json()
+        assert completed["status"] == "completed"
+        assert completed["stage"] == "completed"
+        assert completed["document_id"] > 0
+        assert completed["chunk_count"] >= 1
+
+        document = client.get(f"/api/knowledge/documents/{completed['document_id']}")
+        assert document.status_code == 200
+        assert document.json()["metadata"]["import_task_id"] == task["id"]
+
+
 def test_knowledge_base_update_and_document_rechunk(monkeypatch) -> None:
     monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
 

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
     embedding_timeout_seconds: float = Field(default=30, validation_alias="EMBEDDING_TIMEOUT_SECONDS")
     faiss_index_dir: str = Field(default="./data/faiss", validation_alias="FAISS_INDEX_DIR")
-    faiss_enabled: bool = Field(default=True, validation_alias="FAISS_ENABLED")
+    faiss_enabled: bool = Field(default=False, validation_alias="FAISS_ENABLED")
     cors_origins_raw: str = Field(
         default="http://127.0.0.1:5173,http://localhost:5173",
         validation_alias="CORS_ORIGINS",
