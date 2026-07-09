@@ -42,12 +42,14 @@ import {
   rechunkKnowledgeDocument,
   rebuildKnowledgeFaissIndex,
   renderAgentPrompt,
+  resetAnalysisTaskTemplate,
   rollbackAgent,
   runAgentTool,
   searchKnowledge,
   sendAgentChat,
   testRunAgent,
   updateAgent,
+  updateAnalysisTaskTemplate,
   updateKnowledgeBase,
   updateKnowledgeChunk,
   type AgentConfig,
@@ -1303,6 +1305,7 @@ interface AnalysisPreset {
   agentKeys: string[];
   includeReport: boolean;
   defaultQuery: string;
+  isCustomized?: boolean;
 }
 
 const analysisPresets: AnalysisPreset[] = [
@@ -1505,7 +1508,8 @@ function mapAnalysisTaskTemplate(template: AnalysisTaskTemplate): AnalysisPreset
     description: template.description,
     agentKeys: template.agent_keys,
     includeReport: template.include_report,
-    defaultQuery: template.default_prompt
+    defaultQuery: template.default_prompt,
+    isCustomized: template.is_customized
   };
 }
 
@@ -1520,6 +1524,7 @@ function MultiAgentAnalysisPage() {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [message, setMessage] = useState("");
   const [running, setRunning] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   const preset = templates.find((item) => item.key === presetKey) ?? templates[0] ?? analysisPresets[1];
   const groupedPresets = templates.filter((item) => item.group === groupKey);
@@ -1553,6 +1558,42 @@ function MultiAgentAnalysisPage() {
   function selectPreset(nextPreset: AnalysisPreset) {
     setPresetKey(nextPreset.key);
     setQuery(nextPreset.defaultQuery);
+  }
+
+  function applyTemplateUpdate(nextTemplate: AnalysisTaskTemplate) {
+    const mapped = mapAnalysisTaskTemplate(nextTemplate);
+    setTemplates((items) => items.map((item) => (item.key === mapped.key ? mapped : item)));
+    setPresetKey(mapped.key);
+    setGroupKey(mapped.group);
+    setQuery(mapped.defaultQuery);
+  }
+
+  async function saveTemplatePrompt() {
+    setSavingTemplate(true);
+    setMessage("");
+    try {
+      const updated = await updateAnalysisTaskTemplate(preset.key, { default_prompt: query });
+      applyTemplateUpdate(updated);
+      setMessage("任务提示词已保存");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "任务提示词保存失败");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function resetTemplatePrompt() {
+    setSavingTemplate(true);
+    setMessage("");
+    try {
+      const restored = await resetAnalysisTaskTemplate(preset.key);
+      applyTemplateUpdate(restored);
+      setMessage("已恢复内置任务提示词");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "任务提示词恢复失败");
+    } finally {
+      setSavingTemplate(false);
+    }
   }
 
   useEffect(() => {
@@ -1631,7 +1672,14 @@ function MultiAgentAnalysisPage() {
 
         <Panel
           title="任务参数"
-          actions={<button className="btn btn-primary" disabled={running || isTaskActive(task)} onClick={startTask} type="button">{isTaskActive(task) ? "执行中" : "启动分析"}</button>}
+          actions={
+            <>
+              {preset.isCustomized ? <StatusBadge tone="blue">已自定义</StatusBadge> : null}
+              <button className="btn btn-secondary" disabled={savingTemplate} onClick={saveTemplatePrompt} type="button">保存提示词</button>
+              <button className="btn btn-secondary" disabled={savingTemplate || !preset.isCustomized} onClick={resetTemplatePrompt} type="button">恢复默认</button>
+              <button className="btn btn-primary" disabled={running || isTaskActive(task)} onClick={startTask} type="button">{isTaskActive(task) ? "执行中" : "启动分析"}</button>
+            </>
+          }
         >
           <div className="form-grid compact">
             <label>标的代码<input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} /></label>

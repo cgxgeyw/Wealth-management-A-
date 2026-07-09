@@ -13,8 +13,11 @@ from app.schemas.analysis_task import (
     AnalysisTaskRead,
     AnalysisTaskReportResponse,
     AnalysisTaskTemplateListResponse,
+    AnalysisTaskTemplateRead,
+    AnalysisTaskTemplateUpdateRequest,
 )
 from app.services.analysis_tasks import (
+    apply_task_template_defaults,
     create_analysis_task,
     get_analysis_task,
     get_analysis_task_model,
@@ -22,7 +25,11 @@ from app.services.analysis_tasks import (
     read_task_report,
     run_analysis_task,
 )
-from app.services.analysis_task_templates import list_task_templates
+from app.services.analysis_task_templates import (
+    list_task_templates_for_db,
+    reset_task_template_override,
+    update_task_template_override,
+)
 
 router = APIRouter()
 
@@ -33,6 +40,7 @@ def create_task(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> AnalysisTaskRead:
+    payload = apply_task_template_defaults(db, payload)
     task = create_analysis_task(db, payload)
     background_tasks.add_task(run_analysis_task, task.task_key, payload.model_dump(mode="json"))
     return task
@@ -44,8 +52,34 @@ def list_tasks(limit: int = 30, db: Session = Depends(get_db)) -> AnalysisTaskLi
 
 
 @router.get("/templates", response_model=AnalysisTaskTemplateListResponse)
-def list_templates() -> AnalysisTaskTemplateListResponse:
-    return AnalysisTaskTemplateListResponse(items=list_task_templates())
+def list_templates(db: Session = Depends(get_db)) -> AnalysisTaskTemplateListResponse:
+    return AnalysisTaskTemplateListResponse(items=list_task_templates_for_db(db))
+
+
+@router.patch("/templates/{template_key}", response_model=AnalysisTaskTemplateRead)
+def update_template(
+    template_key: str,
+    payload: AnalysisTaskTemplateUpdateRequest,
+    db: Session = Depends(get_db),
+) -> AnalysisTaskTemplateRead:
+    template = update_task_template_override(
+        db,
+        template_key,
+        default_prompt=payload.default_prompt,
+        agent_keys=payload.agent_keys,
+        include_report=payload.include_report,
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Analysis task template not found.")
+    return AnalysisTaskTemplateRead(**template)
+
+
+@router.delete("/templates/{template_key}", response_model=AnalysisTaskTemplateRead)
+def reset_template(template_key: str, db: Session = Depends(get_db)) -> AnalysisTaskTemplateRead:
+    template = reset_task_template_override(db, template_key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Analysis task template not found.")
+    return AnalysisTaskTemplateRead(**template)
 
 
 @router.get("/{task_key}", response_model=AnalysisTaskRead)

@@ -219,6 +219,7 @@ export interface AnalysisTaskTemplate {
   reference: string;
   focus: string[];
   required_output: string[];
+  is_customized: boolean;
 }
 
 export interface AnalysisTaskTemplateListResponse {
@@ -952,6 +953,17 @@ export function fetchAnalysisTasks(limit = 30): Promise<AnalysisTaskListResponse
 
 export function fetchAnalysisTaskTemplates(): Promise<AnalysisTaskTemplateListResponse> {
   return getJson<AnalysisTaskTemplateListResponse>("/api/analysis-tasks/templates");
+}
+
+export function updateAnalysisTaskTemplate(
+  templateKey: string,
+  payload: { default_prompt?: string; agent_keys?: string[]; include_report?: boolean }
+): Promise<AnalysisTaskTemplate> {
+  return patchJson<AnalysisTaskTemplate>(`/api/analysis-tasks/templates/${encodeURIComponent(templateKey)}`, payload);
+}
+
+export function resetAnalysisTaskTemplate(templateKey: string): Promise<AnalysisTaskTemplate> {
+  return deleteJson<AnalysisTaskTemplate>(`/api/analysis-tasks/templates/${encodeURIComponent(templateKey)}`);
 }
 
 export function fetchAnalysisTask(taskKey: string): Promise<AnalysisTask> {

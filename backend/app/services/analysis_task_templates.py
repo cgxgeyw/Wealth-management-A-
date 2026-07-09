@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.analysis_task import AnalysisTaskTemplateOverride
 
 
 @dataclass(frozen=True)
@@ -17,6 +23,26 @@ class AnalysisTaskTemplate:
     reference: str
     focus: list[str]
     required_output: list[str]
+
+    def merged_read(self, override: AnalysisTaskTemplateOverride | None = None) -> dict[str, Any]:
+        agent_keys = self.agent_keys
+        if override and override.agent_keys_json:
+            try:
+                parsed_agent_keys = json.loads(override.agent_keys_json)
+            except json.JSONDecodeError:
+                parsed_agent_keys = []
+            if isinstance(parsed_agent_keys, list) and parsed_agent_keys:
+                agent_keys = [str(item) for item in parsed_agent_keys]
+        include_report = self.include_report
+        if override and override.include_report in {0, 1}:
+            include_report = bool(override.include_report)
+        return {
+            **self.read(),
+            "agent_keys": agent_keys,
+            "include_report": include_report,
+            "default_prompt": override.default_prompt if override and override.default_prompt else self.default_prompt,
+            "is_customized": bool(override),
+        }
 
     def mode_protocol(self) -> dict[str, Any]:
         return {
@@ -271,8 +297,66 @@ def list_task_templates() -> list[dict[str, Any]]:
     return [template.read() for template in TASK_TEMPLATES]
 
 
+def list_task_templates_for_db(db: Session) -> list[dict[str, Any]]:
+    ensure_task_template_schema(db)
+    overrides = db.scalars(select(AnalysisTaskTemplateOverride)).all()
+    by_key = {override.template_key: override for override in overrides}
+    return [template.merged_read(by_key.get(template.key)) for template in TASK_TEMPLATES]
+
+
 def get_task_template(key: str) -> AnalysisTaskTemplate | None:
     return TASK_TEMPLATES_BY_KEY.get(key)
+
+
+def get_task_template_for_db(db: Session, key: str) -> dict[str, Any] | None:
+    ensure_task_template_schema(db)
+    template = get_task_template(key)
+    if not template:
+        return None
+    override = db.scalar(select(AnalysisTaskTemplateOverride).where(AnalysisTaskTemplateOverride.template_key == key))
+    return template.merged_read(override)
+
+
+def update_task_template_override(
+    db: Session,
+    key: str,
+    default_prompt: str | None = None,
+    agent_keys: list[str] | None = None,
+    include_report: bool | None = None,
+) -> dict[str, Any] | None:
+    ensure_task_template_schema(db)
+    template = get_task_template(key)
+    if not template:
+        return None
+    override = db.scalar(select(AnalysisTaskTemplateOverride).where(AnalysisTaskTemplateOverride.template_key == key))
+    if not override:
+        override = AnalysisTaskTemplateOverride(template_key=key)
+    if default_prompt is not None:
+        override.default_prompt = default_prompt.strip()
+    if agent_keys is not None:
+        override.agent_keys_json = json.dumps(agent_keys, ensure_ascii=False)
+    if include_report is not None:
+        override.include_report = 1 if include_report else 0
+    db.add(override)
+    db.commit()
+    db.refresh(override)
+    return template.merged_read(override)
+
+
+def reset_task_template_override(db: Session, key: str) -> dict[str, Any] | None:
+    ensure_task_template_schema(db)
+    template = get_task_template(key)
+    if not template:
+        return None
+    override = db.scalar(select(AnalysisTaskTemplateOverride).where(AnalysisTaskTemplateOverride.template_key == key))
+    if override:
+        db.delete(override)
+        db.commit()
+    return template.merged_read(None)
+
+
+def ensure_task_template_schema(db: Session) -> None:
+    AnalysisTaskTemplateOverride.__table__.create(bind=db.get_bind(), checkfirst=True)
 
 
 def get_mode_protocol(mode: str) -> dict[str, Any]:

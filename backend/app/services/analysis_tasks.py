@@ -14,6 +14,7 @@ from app.models.analysis_task import AnalysisTask
 from app.schemas.agent_run import AgentRunRead
 from app.schemas.analysis_task import AnalysisTaskCreateRequest, AnalysisTaskRead
 from app.services.agent_orchestrator import create_agent_run
+from app.services.analysis_task_templates import get_task_template_for_db
 
 
 def ensure_analysis_task_schema(db: Session) -> None:
@@ -43,6 +44,19 @@ def create_analysis_task(db: Session, payload: AnalysisTaskCreateRequest) -> Ana
     db.commit()
     db.refresh(task)
     return analysis_task_read(task)
+
+
+def apply_task_template_defaults(db: Session, payload: AnalysisTaskCreateRequest) -> AnalysisTaskCreateRequest:
+    template = get_task_template_for_db(db, payload.mode)
+    if not template:
+        return payload
+    updates: dict[str, object] = {}
+    if not payload.query.strip():
+        updates["query"] = str(template["default_prompt"])
+    if not payload.agent_keys:
+        updates["agent_keys"] = [str(item) for item in template["agent_keys"]]
+        updates["include_report"] = bool(template["include_report"])
+    return payload.model_copy(update=updates) if updates else payload
 
 
 def run_analysis_task(task_key: str, payload_data: dict) -> None:

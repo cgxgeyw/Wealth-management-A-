@@ -44,10 +44,17 @@ class AnalysisTaskTemplateRead(BaseModel):
     reference: str
     focus: list[str]
     required_output: list[str]
+    is_customized: bool = False
 
 
 class AnalysisTaskTemplateListResponse(BaseModel):
     items: list[AnalysisTaskTemplateRead]
+
+
+class AnalysisTaskTemplateUpdateRequest(BaseModel):
+    default_prompt: str | None = Field(default=None, max_length=20000)
+    agent_keys: list[str] | None = None
+    include_report: bool | None = None
 
 
 class AnalysisTaskReportResponse(BaseModel):

@@ -129,6 +129,56 @@ def test_analysis_task_templates_endpoint() -> None:
     assert "bear" in deep["agent_keys"]
 
 
+def test_analysis_task_template_override_and_defaults(monkeypatch) -> None:
+    custom_prompt = "自定义标准投研提示词 pytest"
+
+    def fake_create_agent_run(db, payload) -> AgentRunRead:
+        return AgentRunRead(
+            id=44,
+            run_key="AR-TEMPLATE",
+            symbol=payload.symbol,
+            query=payload.query,
+            mode=payload.mode,
+            status="completed",
+            snapshot_id=904,
+            agent_keys=payload.agent_keys,
+            steps=[],
+            result={"query": payload.query, "agent_keys": payload.agent_keys},
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+    monkeypatch.setattr("app.services.analysis_tasks.create_agent_run", fake_create_agent_run)
+
+    with TestClient(app) as client:
+        updated = client.patch(
+            "/api/analysis-tasks/templates/standard",
+            json={"default_prompt": custom_prompt},
+        )
+        listed = client.get("/api/analysis-tasks/templates")
+        created = client.post(
+            "/api/analysis-tasks",
+            json={"symbol": "300750", "mode": "standard"},
+        )
+        task_key = created.json()["task_key"]
+        detail = client.get(f"/api/analysis-tasks/{task_key}")
+        reset = client.delete("/api/analysis-tasks/templates/standard")
+
+    assert updated.status_code == 200
+    assert updated.json()["default_prompt"] == custom_prompt
+    assert updated.json()["is_customized"] is True
+    assert any(
+        item["key"] == "standard" and item["default_prompt"] == custom_prompt and item["is_customized"]
+        for item in listed.json()["items"]
+    )
+    assert created.status_code == 200
+    assert detail.json()["query"] == custom_prompt
+    assert detail.json()["agent_keys"]
+    assert reset.status_code == 200
+    assert reset.json()["is_customized"] is False
+    assert reset.json()["default_prompt"] != custom_prompt
+
+
 def test_analysis_task_inline_worker(monkeypatch, tmp_path) -> None:
     report_path = tmp_path / "inline-report.md"
     report_path.write_text("# Inline\n", encoding="utf-8")

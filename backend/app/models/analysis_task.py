@@ -27,3 +27,17 @@ class AnalysisTask(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class AnalysisTaskTemplateOverride(Base):
+    __tablename__ = "analysis_task_template_overrides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    template_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    default_prompt: Mapped[str] = mapped_column(Text, default="")
+    agent_keys_json: Mapped[str] = mapped_column(Text, default="")
+    include_report: Mapped[int] = mapped_column(Integer, default=-1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
