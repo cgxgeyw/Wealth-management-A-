@@ -12,6 +12,7 @@ from app.schemas.analysis_task import (
     AnalysisTaskListResponse,
     AnalysisTaskRead,
     AnalysisTaskReportResponse,
+    AnalysisTaskTemplateListResponse,
 )
 from app.services.analysis_tasks import (
     create_analysis_task,
@@ -21,6 +22,7 @@ from app.services.analysis_tasks import (
     read_task_report,
     run_analysis_task,
 )
+from app.services.analysis_task_templates import list_task_templates
 
 router = APIRouter()
 
@@ -39,6 +41,11 @@ def create_task(
 @router.get("", response_model=AnalysisTaskListResponse)
 def list_tasks(limit: int = 30, db: Session = Depends(get_db)) -> AnalysisTaskListResponse:
     return AnalysisTaskListResponse(items=list_analysis_tasks(db, limit=limit))
+
+
+@router.get("/templates", response_model=AnalysisTaskTemplateListResponse)
+def list_templates() -> AnalysisTaskTemplateListResponse:
+    return AnalysisTaskTemplateListResponse(items=list_task_templates())
 
 
 @router.get("/{task_key}", response_model=AnalysisTaskRead)

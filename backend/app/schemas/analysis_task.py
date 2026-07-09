@@ -32,6 +32,24 @@ class AnalysisTaskListResponse(BaseModel):
     items: list[AnalysisTaskRead]
 
 
+class AnalysisTaskTemplateRead(BaseModel):
+    key: str
+    group: str
+    group_name: str
+    name: str
+    description: str
+    agent_keys: list[str]
+    include_report: bool
+    default_prompt: str
+    reference: str
+    focus: list[str]
+    required_output: list[str]
+
+
+class AnalysisTaskTemplateListResponse(BaseModel):
+    items: list[AnalysisTaskTemplateRead]
+
+
 class AnalysisTaskReportResponse(BaseModel):
     task_key: str
     report_path: str

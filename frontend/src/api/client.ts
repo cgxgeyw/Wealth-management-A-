@@ -207,6 +207,24 @@ export interface AnalysisTaskListResponse {
   items: AnalysisTask[];
 }
 
+export interface AnalysisTaskTemplate {
+  key: string;
+  group: string;
+  group_name: string;
+  name: string;
+  description: string;
+  agent_keys: string[];
+  include_report: boolean;
+  default_prompt: string;
+  reference: string;
+  focus: string[];
+  required_output: string[];
+}
+
+export interface AnalysisTaskTemplateListResponse {
+  items: AnalysisTaskTemplate[];
+}
+
 export interface AnalysisTaskReportResponse {
   task_key: string;
   report_path: string;
@@ -930,6 +948,10 @@ export function createAnalysisTask(payload: AgentRunCreatePayload): Promise<Anal
 
 export function fetchAnalysisTasks(limit = 30): Promise<AnalysisTaskListResponse> {
   return getJson<AnalysisTaskListResponse>(`/api/analysis-tasks?limit=${limit}`);
+}
+
+export function fetchAnalysisTaskTemplates(): Promise<AnalysisTaskTemplateListResponse> {
+  return getJson<AnalysisTaskTemplateListResponse>("/api/analysis-tasks/templates");
 }
 
 export function fetchAnalysisTask(taskKey: string): Promise<AnalysisTask> {

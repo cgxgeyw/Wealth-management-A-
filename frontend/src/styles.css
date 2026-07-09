@@ -1571,6 +1571,72 @@ tbody tr.row-active {
   padding: 12px;
 }
 
+.analysis-task-browser {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.analysis-group-list {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.analysis-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 9px;
+  color: var(--ink-soft);
+  background: var(--panel);
+  text-align: left;
+}
+
+.analysis-group:hover,
+.preset-card:hover {
+  border-color: var(--border-strong);
+  background: #f8fafc;
+}
+
+.analysis-group.active {
+  border-color: var(--blue);
+  color: var(--ink);
+  background: #eff6ff;
+}
+
+.analysis-group span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.analysis-group strong {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-muted);
+  font-size: 11px;
+}
+
+.analysis-group.active strong {
+  color: var(--blue);
+  background: #dbeafe;
+}
+
+.preset-grid.grouped {
+  padding: 0;
+}
+
 .preset-card {
   display: grid;
   gap: 6px;
@@ -1829,6 +1895,7 @@ tbody tr.row-active {
   .prompt-grid,
   .form-grid,
   .form-grid.two,
+  .analysis-task-browser,
   .stage-strip,
   .upload-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1872,8 +1939,13 @@ tbody tr.row-active {
   .prompt-grid,
   .form-grid,
   .form-grid.two,
+  .analysis-task-browser,
   .stage-strip,
   .upload-row {
     grid-template-columns: 1fr;
+  }
+
+  .analysis-group-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

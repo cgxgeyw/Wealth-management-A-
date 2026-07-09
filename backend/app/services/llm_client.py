@@ -8,6 +8,7 @@ import httpx
 
 from app.core.config import settings
 from app.schemas.agent_run import AgentRunCreateRequest, AgentRunStep
+from app.services.analysis_task_templates import get_mode_protocol
 
 
 def generate_run_conclusion(
@@ -47,7 +48,7 @@ def _call_chat_completion(
             "role": "system",
             "content": (
                 "你是谨慎的A股投研总监。只能基于给定工具结果总结，"
-                "不要编造价格、新闻、财务数据。输出严格JSON。"
+                "不要编造价格、新闻、财务数据。需要遵循当前任务模式的分析协议。输出严格JSON。"
             ),
         },
         {
@@ -57,6 +58,7 @@ def _call_chat_completion(
                     "symbol": symbol,
                     "query": payload.query,
                     "mode": payload.mode,
+                    "mode_protocol": get_mode_protocol(payload.mode),
                     "agent_summaries": agent_summaries,
                     "tool_steps": [
                         {

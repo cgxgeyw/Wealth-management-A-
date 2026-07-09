@@ -112,6 +112,23 @@ def test_analysis_task_lifecycle_and_report(monkeypatch, tmp_path) -> None:
     assert download.status_code == 200
 
 
+def test_analysis_task_templates_endpoint() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/analysis-tasks/templates")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    standard = next(item for item in items if item["key"] == "standard")
+    deep = next(item for item in items if item["key"] == "deep")
+    assert standard["group"] == "stock"
+    assert "TradingAgents" in standard["reference"]
+    assert "标准个股投研" in standard["name"]
+    assert "流程：" in standard["default_prompt"]
+    assert deep["include_report"] is True
+    assert "bull" in deep["agent_keys"]
+    assert "bear" in deep["agent_keys"]
+
+
 def test_analysis_task_inline_worker(monkeypatch, tmp_path) -> None:
     report_path = tmp_path / "inline-report.md"
     report_path.write_text("# Inline\n", encoding="utf-8")

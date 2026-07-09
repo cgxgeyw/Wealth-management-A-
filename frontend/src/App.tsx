@@ -24,6 +24,7 @@ import {
   fetchAnalysisTask,
   fetchAnalysisTaskReport,
   fetchAnalysisTasks,
+  fetchAnalysisTaskTemplates,
   fetchAgentRun,
   fetchAgentVersions,
   fetchAgentTools,
@@ -60,6 +61,7 @@ import {
   type AgentToolSpec,
   type AnalysisTask,
   type AnalysisTaskReportResponse,
+  type AnalysisTaskTemplate,
   type DataSnapshot,
   type HealthResponse,
   type KnowledgeBase,
@@ -1291,55 +1293,267 @@ function escapeSeparatorForInput(value: string): string {
   return value.replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 }
 
-const analysisPresets = [
+type AnalysisGroupKey = "stock" | "special" | "debate" | "market" | "scheduled";
+
+interface AnalysisPreset {
+  key: string;
+  group: AnalysisGroupKey;
+  name: string;
+  description: string;
+  agentKeys: string[];
+  includeReport: boolean;
+  defaultQuery: string;
+}
+
+const analysisPresets: AnalysisPreset[] = [
   {
     key: "quick",
-    name: "快速分析",
+    group: "stock",
+    name: "快速个股诊断",
     description: "数据管家、技术面、新闻、投研总监，适合先看方向。",
     agentKeys: ["data_steward", "technical", "news", "research_director"],
-    includeReport: false
+    includeReport: false,
+    defaultQuery: [
+      "任务：快速个股诊断，参考 TradingAgents 的 market/news 到 manager 短流程。",
+      "流程：先校验行情和新闻数据可用性，再判断技术结构和近期事件，最后由投研总监给出方向。",
+      "必须覆盖：最新价格状态、近 5 至 20 日趋势、成交量变化、最近新闻/公告、主要风险。",
+      "输出：一句话结论、短线方向、关键证据、风险、继续跟踪条件。不得编造未获取的数据。"
+    ].join("\n")
   },
   {
     key: "standard",
-    name: "标准分析",
+    group: "stock",
+    name: "标准个股投研",
     description: "覆盖技术、新闻、基本面、资金和风控，生成 Markdown 报告。",
     agentKeys: ["data_steward", "technical", "news", "fundamental", "capital_flow", "risk", "research_director"],
-    includeReport: true
+    includeReport: true,
+    defaultQuery: [
+      "任务：标准个股投研，参考 TradingAgents 的 analyst team -> risk -> research manager。",
+      "流程：数据管家先检查数据新鲜度；技术面分析趋势、量价和指标；新闻分析事实、观点和事件窗口；基本面分析估值、盈利质量和财务风险；资金分析主力、北向、龙虎榜和两融；风控审查流动性、解禁和事件风险；投研总监综合。",
+      "必须覆盖：技术信号、新闻/公告影响、财务估值、资金行为、风险约束、观察指标。",
+      "输出：Markdown 研究报告，包含结论、适用周期、置信度、关键证据、主要风险、后续观察项。仅供研究，不构成投资建议。"
+    ].join("\n")
   },
   {
     key: "deep",
-    name: "深度分析",
+    group: "stock",
+    name: "深度 A 股投研",
     description: "加入政策行业、多方、空方和风控审查，适合正式研判。",
     agentKeys: ["data_steward", "technical", "news", "fundamental", "policy_industry", "capital_flow", "bull", "bear", "risk", "research_director"],
-    includeReport: true
+    includeReport: true,
+    defaultQuery: [
+      "任务：深度 A 股投研，参考 TradingAgents-astock 的七分析师、质量门控、多空辩论、风控和最终决策框架。",
+      "流程：数据管家检查数据质量；技术面、新闻、基本面、政策行业、资金行为分别形成证据；多方只构建有证据支持的看多逻辑；空方只构建反对或降低仓位的证据；风控审查交易约束；投研总监形成最终判断。",
+      "A 股约束：纳入涨跌停、T+1、北向资金、换手率、政策市、解禁/减持、两融和龙虎榜影响。",
+      "输出：深度 Markdown 报告，包含分析师分节、多方观点、空方观点、风险审查、最终结论、置信度、结论失效条件和跟踪清单。不得把推测写成事实。"
+    ].join("\n")
+  },
+  {
+    key: "technical_focus",
+    group: "special",
+    name: "技术面专项",
+    description: "聚焦趋势、量价、指标、支撑压力和交易观察条件。",
+    agentKeys: ["data_steward", "technical", "capital_flow", "risk"],
+    includeReport: false,
+    defaultQuery: [
+      "任务：技术面专项，参考 TradingAgents-astock market analyst 的 A 股技术框架。",
+      "流程：先取 K 线和指标，再结合资金行为验证量价信号，最后由风控检查波动和可执行性。",
+      "必须覆盖：趋势级别、均线结构、MACD/KDJ/RSI/BOLL、成交量与换手、支撑位、压力位、涨跌停和 T+1 对交易计划的影响。",
+      "输出：技术结论、关键价位、触发条件、失效条件、风险提醒。"
+    ].join("\n")
+  },
+  {
+    key: "news_event",
+    group: "special",
+    name: "新闻事件专项",
+    description: "聚焦新闻、公告、研报和政策事件的事实与影响窗口。",
+    agentKeys: ["news", "policy_industry", "fundamental", "risk", "research_director"],
+    includeReport: true,
+    defaultQuery: [
+      "任务：新闻事件专项，参考 TradingAgents news analyst 与 A 股政策分析师框架。",
+      "流程：新闻 Agent 区分事实、观点和市场传闻；政策行业 Agent 判断政策层级和影响窗口；基本面 Agent 判断事件是否影响收入、利润、估值或现金流；风控 Agent 检查事件风险；投研总监汇总。",
+      "必须覆盖：事件来源、发布日期、影响对象、利好/利空方向、短中长期窗口、待验证信息。",
+      "输出：事件时间线、影响链条、证据强弱、风险和跟踪事项。"
+    ].join("\n")
+  },
+  {
+    key: "capital_focus",
+    group: "special",
+    name: "资金行为专项",
+    description: "聚焦主力资金、北向、龙虎榜、两融和异常交易。",
+    agentKeys: ["data_steward", "technical", "capital_flow", "risk"],
+    includeReport: false,
+    defaultQuery: [
+      "任务：资金行为专项，参考 TradingAgents-astock hot_money_tracker。",
+      "流程：数据管家校验行情与资金数据；技术面识别量价异动；资金 Agent 分析主力资金、北向、龙虎榜、两融；风控检查追高、流动性和杠杆风险。",
+      "必须覆盖：近 5 日成交量变化、主力资金净流入、北向资金、龙虎榜席位/机构参与、两融变化、是否存在游资接力或出货迹象。",
+      "输出：资金面总体判断、短线资金信号、风险和观察条件。"
+    ].join("\n")
+  },
+  {
+    key: "policy_sector",
+    group: "special",
+    name: "政策行业专项",
+    description: "聚焦宏观政策、产业政策、行业景气和板块轮动。",
+    agentKeys: ["policy_industry", "news", "capital_flow", "research_director"],
+    includeReport: true,
+    defaultQuery: [
+      "任务：政策行业专项，参考 TradingAgents-astock policy analyst。",
+      "流程：政策行业 Agent 从宏观、监管、产业、地方和国际政策分层；新闻 Agent 补充事件证据；资金 Agent 检查板块资金是否确认；投研总监判断行业影响。",
+      "必须覆盖：政策发布方、政策力度、受益/受损链条、影响时间窗口、行业景气、板块轮动和资金确认。",
+      "输出：政策评级、行业方向、对目标公司的传导路径、风险和观察指标。"
+    ].join("\n")
   },
   {
     key: "debate",
+    group: "debate",
     name: "多空辩论",
     description: "聚焦多方和空方论证，适合检查结论是否过度单边。",
     agentKeys: ["technical", "news", "fundamental", "capital_flow", "bull", "bear", "risk", "research_director"],
-    includeReport: true
+    includeReport: true,
+    defaultQuery: [
+      "任务：多空辩论，参考 TradingAgents bull researcher、bear researcher 和 research manager。",
+      "流程：先形成技术、新闻、基本面、资金四类证据；多方只提出看多逻辑和触发条件；空方逐条反驳并提出风险；风控审查双方是否忽略流动性、事件、解禁、两融和数据质量；投研总监裁决。",
+      "辩论规则：每个观点必须对应工具结果或明确标注为假设；禁止只给单边结论；必须列出胜负手和结论失效条件。",
+      "输出：多方论点、空方论点、关键分歧、风控意见、最终倾向。"
+    ].join("\n")
   },
   {
-    key: "risk",
+    key: "risk_review",
+    group: "debate",
     name: "风控审查",
     description: "只跑数据质量、事件风险、解禁和两融相关 Agent。",
     agentKeys: ["data_steward", "news", "capital_flow", "risk"],
-    includeReport: false
+    includeReport: false,
+    defaultQuery: [
+      "任务：风控审查，参考 TradingAgents 的 aggressive / neutral / conservative risk debate，当前版本先执行保守风控检查。",
+      "流程：数据管家检查缺失和新鲜度；新闻 Agent 检查事件风险；资金 Agent 检查资金与杠杆风险；风控 Agent 给出风险等级和约束。",
+      "必须覆盖：数据质量、流动性、波动率、解禁/减持、两融、新闻事件、禁止交易条件。",
+      "输出：风险等级、仓位约束、止损观察点、禁止交易条件、需要补充的数据。"
+    ].join("\n")
+  },
+  {
+    key: "watchlist_scan",
+    group: "market",
+    name: "自选股扫描",
+    description: "按同一套条件扫描关注池，输出优先级和触发原因。",
+    agentKeys: ["data_steward", "technical", "news", "capital_flow", "risk", "research_director"],
+    includeReport: true,
+    defaultQuery: [
+      "任务：自选股扫描，参考 go-stock stock_analysis 定时任务和 TradingAgents 分析师管线。",
+      "流程：对关注池按数据质量、技术、新闻、资金和风险维度打分，投研总监给出优先级。",
+      "必须覆盖：候选理由、触发条件、风险过滤、需要回避的标的、下一次复查条件。",
+      "输出：优先级列表、触发原因、风险标签和后续动作。当前版本如只传入单个代码，则先对该代码输出扫描样式结果。"
+    ].join("\n")
+  },
+  {
+    key: "market_sector",
+    group: "market",
+    name: "大盘板块分析",
+    description: "分析指数环境、板块强弱、资金偏好和市场风险。",
+    agentKeys: ["policy_industry", "news", "capital_flow", "risk", "research_director"],
+    includeReport: true,
+    defaultQuery: [
+      "任务：大盘板块分析，参考 go-stock market_analysis 与 TradingAgents news/macro/risk 管线。",
+      "流程：政策行业 Agent 判断宏观和板块环境；新闻 Agent 提取市场事件；资金 Agent 检查北向和板块资金；风控 Agent 判断市场风险；投研总监总结。",
+      "必须覆盖：市场状态、主线板块、资金偏好、政策变量、风险事件和明日观察点。",
+      "输出：市场温度、板块强弱、资金方向、风险提示和关注清单。"
+    ].join("\n")
+  },
+  {
+    key: "daily_review",
+    group: "scheduled",
+    name: "每日收盘复盘",
+    description: "适合后续接入定时任务，生成市场和关注池复盘。",
+    agentKeys: ["policy_industry", "news", "capital_flow", "risk", "research_director"],
+    includeReport: true,
+    defaultQuery: [
+      "任务：每日收盘复盘，参考 go-stock 定时任务里的 market_analysis / stock_analysis。",
+      "流程：收盘后汇总市场、板块、新闻、资金、风险，再生成可归档报告。",
+      "必须覆盖：今日市场状态、板块主线、资金变化、重要新闻、风险事件、明日观察点。",
+      "输出：收盘复盘报告。当前版本先作为手动长任务运行，后续接入定时任务调度。"
+    ].join("\n")
   }
 ];
 
+const analysisGroups: { key: AnalysisGroupKey; name: string }[] = [
+  { key: "stock", name: "个股分析" },
+  { key: "special", name: "专项分析" },
+  { key: "debate", name: "辩论风控" },
+  { key: "market", name: "市场扫描" },
+  { key: "scheduled", name: "定时任务" }
+];
+
+const agentLabelMap: Record<string, string> = {
+  data_steward: "数据管家",
+  technical: "技术面",
+  news: "新闻",
+  fundamental: "基本面",
+  policy_industry: "政策行业",
+  capital_flow: "资金",
+  bull: "多方",
+  bear: "空方",
+  risk: "风控",
+  research_director: "投研总监"
+};
+
+function mapAnalysisTaskTemplate(template: AnalysisTaskTemplate): AnalysisPreset {
+  return {
+    key: template.key,
+    group: template.group as AnalysisGroupKey,
+    name: template.name,
+    description: template.description,
+    agentKeys: template.agent_keys,
+    includeReport: template.include_report,
+    defaultQuery: template.default_prompt
+  };
+}
+
 function MultiAgentAnalysisPage() {
+  const [templates, setTemplates] = useState<AnalysisPreset[]>(analysisPresets);
   const [presetKey, setPresetKey] = useState("standard");
+  const [groupKey, setGroupKey] = useState("stock");
   const [symbol, setSymbol] = useState("300750");
   const [period, setPeriod] = useState("daily");
-  const [query, setQuery] = useState("请生成一个标准 A 股投研分析，重点关注未来两周的机会和风险。");
+  const [query, setQuery] = useState(analysisPresets.find((item) => item.key === "standard")?.defaultQuery ?? "");
   const [task, setTask] = useState<AnalysisTask | null>(null);
   const [run, setRun] = useState<AgentRun | null>(null);
   const [message, setMessage] = useState("");
   const [running, setRunning] = useState(false);
 
-  const preset = analysisPresets.find((item) => item.key === presetKey) ?? analysisPresets[1];
+  const preset = templates.find((item) => item.key === presetKey) ?? templates[0] ?? analysisPresets[1];
+  const groupedPresets = templates.filter((item) => item.group === groupKey);
+
+  useEffect(() => {
+    fetchAnalysisTaskTemplates()
+      .then((result) => {
+        const nextTemplates = result.items.map(mapAnalysisTaskTemplate);
+        if (nextTemplates.length === 0) {
+          return;
+        }
+        setTemplates(nextTemplates);
+        const standard = nextTemplates.find((item) => item.key === "standard") ?? nextTemplates[0];
+        setPresetKey(standard.key);
+        setGroupKey(standard.group);
+        setQuery(standard.defaultQuery);
+      })
+      .catch((err: unknown) => setMessage(err instanceof Error ? err.message : "任务模板加载失败"));
+  }, []);
+
+  function selectGroup(nextGroupKey: string) {
+    const normalizedGroup = nextGroupKey as AnalysisGroupKey;
+    setGroupKey(normalizedGroup);
+    const firstPreset = templates.find((item) => item.group === normalizedGroup);
+    if (firstPreset) {
+      setPresetKey(firstPreset.key);
+      setQuery(firstPreset.defaultQuery);
+    }
+  }
+
+  function selectPreset(nextPreset: AnalysisPreset) {
+    setPresetKey(nextPreset.key);
+    setQuery(nextPreset.defaultQuery);
+  }
 
   useEffect(() => {
     if (!task || !isTaskActive(task)) {
@@ -1393,15 +1607,25 @@ function MultiAgentAnalysisPage() {
     <div className="page-grid multi-agent-layout">
       <div className="main-column">
         {message ? <div className="notice">{message}</div> : null}
-        <Panel title="流程预设">
-          <div className="preset-grid">
-            {analysisPresets.map((item) => (
-              <button className={presetKey === item.key ? "preset-card active" : "preset-card"} key={item.key} onClick={() => setPresetKey(item.key)} type="button">
-                <strong>{item.name}</strong>
-                <span>{item.description}</span>
-                <small>{item.agentKeys.length} agents · {item.includeReport ? "报告" : "不生成报告"}</small>
-              </button>
-            ))}
+        <Panel title="任务分组">
+          <div className="analysis-task-browser">
+            <div className="analysis-group-list">
+              {analysisGroups.map((group) => (
+                <button className={groupKey === group.key ? "analysis-group active" : "analysis-group"} key={group.key} onClick={() => selectGroup(group.key)} type="button">
+                  <span>{group.name}</span>
+                  <strong>{templates.filter((item) => item.group === group.key).length}</strong>
+                </button>
+              ))}
+            </div>
+            <div className="preset-grid grouped">
+              {groupedPresets.map((item) => (
+                <button className={presetKey === item.key ? "preset-card active" : "preset-card"} key={item.key} onClick={() => selectPreset(item)} type="button">
+                  <strong>{item.name}</strong>
+                  <span>{item.description}</span>
+                  <small>{item.agentKeys.length} agents · {item.includeReport ? "生成报告" : "不生成报告"}</small>
+                </button>
+              ))}
+            </div>
           </div>
         </Panel>
 
@@ -1427,7 +1651,7 @@ function MultiAgentAnalysisPage() {
             {stageAgents.map((agentKey, index) => (
               <div className={task && task.progress >= ((index + 1) / stageAgents.length) * 80 ? "stage done" : task ? "stage active" : "stage"} key={agentKey}>
                 <span>{index + 1}</span>
-                <strong>{agentKey}</strong>
+                <strong>{agentLabelMap[agentKey] ?? agentKey}</strong>
               </div>
             ))}
           </div>
