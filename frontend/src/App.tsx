@@ -21,6 +21,7 @@ import {
   fetchAgentVersions,
   fetchAgentTools,
   fetchAgents,
+  fetchDataSnapshot,
   fetchHealth,
   fetchKnowledgeBases,
   fetchKnowledgeDocument,
@@ -47,6 +48,7 @@ import {
   type AgentTestRunResponse,
   type AgentToolRunResponse,
   type AgentToolSpec,
+  type DataSnapshot,
   type HealthResponse,
   type KnowledgeBase,
   type KnowledgeChunk,
@@ -154,6 +156,7 @@ function ChatAnalysisPage() {
   const [query, setQuery] = useState("分析 300750，给我一个 2 周交易视角。");
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [snapshotDetail, setSnapshotDetail] = useState<DataSnapshot | null>(null);
   const [message, setMessage] = useState("");
   const [running, setRunning] = useState(false);
 
@@ -169,6 +172,14 @@ function ChatAnalysisPage() {
     });
   }, []);
 
+  useEffect(() => {
+    if (latestRun?.snapshot_id) {
+      openSnapshot(latestRun.snapshot_id).catch((err: unknown) => {
+        setMessage(err instanceof Error ? err.message : "快照详情加载失败");
+      });
+    }
+  }, [latestRun?.snapshot_id]);
+
   async function startRun(includeReport = false) {
     setRunning(true);
     setMessage("");
@@ -182,12 +193,24 @@ function ChatAnalysisPage() {
         include_report: includeReport
       });
       setLatestRun(result);
+      await openSnapshot(result.snapshot_id);
       await loadRuns();
       setMessage("Agent 编排完成");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Agent 编排失败");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function openSnapshot(snapshotId: number) {
+    if (!snapshotId) {
+      return;
+    }
+    try {
+      setSnapshotDetail(await fetchDataSnapshot(snapshotId));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "快照详情加载失败");
     }
   }
 
@@ -241,7 +264,11 @@ function ChatAnalysisPage() {
           <div><span className="label">结构化结论</span><strong>{String(latestRun?.result.conclusion ?? "等待运行 Agent 编排")}</strong></div>
           <StatusBadge tone={confidence >= 80 ? "green" : confidence >= 50 ? "amber" : "red"}>置信度 {confidence}%</StatusBadge>
           <p>成功工具 {String(latestRun?.result.tool_success_count ?? 0)} 个，失败工具 {String(latestRun?.result.tool_failed_count ?? 0)} 个。当前结论来自工具编排层，模型研讨层待接入。</p>
-          {latestRun ? <small className="mono">snapshot #{latestRun.snapshot_id} · {String(latestRun.result.snapshot_summary ?? "")}</small> : null}
+          {latestRun ? (
+            <button className="link-button mono" onClick={() => openSnapshot(latestRun.snapshot_id)} type="button">
+              snapshot #{latestRun.snapshot_id} · {String(latestRun.result.snapshot_summary ?? "")}
+            </button>
+          ) : null}
         </div>
         <div className="composer">
           <input className="input mono" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
@@ -254,9 +281,15 @@ function ChatAnalysisPage() {
         <div className="kv-list">
           <div><span>股票</span><strong>{latestRun?.symbol ?? symbol}</strong></div>
           <div><span>运行编号</span><strong className="mono">{latestRun?.run_key ?? "未创建"}</strong></div>
-          <div><span>数据快照</span><strong className="mono">{latestRun ? `#${latestRun.snapshot_id}` : "未创建"}</strong></div>
+          <div>
+            <span>数据快照</span>
+            {latestRun ? (
+              <button className="link-button mono" onClick={() => openSnapshot(latestRun.snapshot_id)} type="button">#{latestRun.snapshot_id}</button>
+            ) : <strong className="mono">未创建</strong>}
+          </div>
           <div><span>状态</span><strong>{latestRun?.status ?? "idle"}</strong></div>
         </div>
+        <SnapshotDetail snapshot={snapshotDetail} />
         <div className="reference-list">
           {latestRun?.steps.map((step) => (
             <button key={`${step.agent_key}-${step.tool_key}-ref`} type="button">{step.tool_key} · {step.status}</button>
@@ -1138,6 +1171,108 @@ function splitCsv(value: string): string[] {
   return value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
 }
 
+function SnapshotDetail({ snapshot }: { snapshot: DataSnapshot | null }) {
+  if (!snapshot) {
+    return <div className="empty-hint">选择数据快照后查看行情、指标、新闻和知识库引用</div>;
+  }
+  const data = parseSnapshotJson(snapshot.snapshot_json);
+  const quote = asRecord(data.quote);
+  const indicators = asRecord(data.indicators);
+  const marketNews = asRecord(data.market_news);
+  const knowledge = asRecord(data.knowledge_context);
+  const warnings = asArray(data.warnings);
+  const indicatorItems = asArray(indicators.items);
+  const newsItems = asArray(marketNews.items);
+  const knowledgeItems = asArray(knowledge.items);
+
+  return (
+    <div className="snapshot-detail">
+      <div className="snapshot-head">
+        <div>
+          <span className="label">数据快照</span>
+          <strong className="mono">#{snapshot.id} · {snapshot.symbol} · {snapshot.period}</strong>
+        </div>
+        <StatusBadge tone={warnings.length ? "amber" : "green"}>{warnings.length ? `${warnings.length} warnings` : "ready"}</StatusBadge>
+      </div>
+      <div className="metrics-grid four">
+        <div className="metric"><span>最新价</span><strong>{formatSnapshotValue(quote.price)}</strong><small>{String(quote.provider_key ?? "-")}</small></div>
+        <div className="metric"><span>涨跌幅</span><strong>{formatSnapshotValue(quote.change_percent)}%</strong><small>{String(quote.timestamp ?? "-")}</small></div>
+        <div className="metric"><span>指标</span><strong>{indicatorItems.length}</strong><small>MA / MACD / RSI / KDJ / BOLL</small></div>
+        <div className="metric"><span>新闻</span><strong>{newsItems.length}</strong><small>{String(marketNews.provider_key ?? "-")}</small></div>
+      </div>
+      <div className="snapshot-section">
+        <strong>指标序列</strong>
+        <div className="reference-list compact">
+          {indicatorItems.slice(0, 10).map((item, index) => {
+            const row = asRecord(item);
+            const values = asArray(row.values);
+            return <button key={`${String(row.name)}-${index}`} type="button">{String(row.name ?? "indicator")} · latest {formatSnapshotValue(values[values.length - 1])}</button>;
+          })}
+          {indicatorItems.length === 0 ? <button type="button">暂无指标</button> : null}
+        </div>
+      </div>
+      <div className="snapshot-section">
+        <strong>新闻引用</strong>
+        <div className="snapshot-list">
+          {newsItems.slice(0, 5).map((item, index) => {
+            const row = asRecord(item);
+            return <div key={`${String(row.id ?? index)}-${index}`}><span>{String(row.source ?? "news")}</span><p>{String(row.title ?? "")}</p></div>;
+          })}
+          {newsItems.length === 0 ? <div className="empty-hint">暂无新闻</div> : null}
+        </div>
+      </div>
+      <div className="snapshot-section">
+        <strong>知识库引用</strong>
+        <div className="snapshot-list">
+          {knowledgeItems.slice(0, 5).map((item, index) => {
+            const row = asRecord(item);
+            return <div key={`${String(row.citation ?? index)}-${index}`}><span className="mono">{String(row.citation ?? "citation")}</span><p>{String(row.snippet ?? "")}</p></div>;
+          })}
+          {knowledgeItems.length === 0 ? <div className="empty-hint">暂无知识库引用</div> : null}
+        </div>
+      </div>
+      {warnings.length ? (
+        <div className="snapshot-section">
+          <strong>Warnings</strong>
+          <div className="snapshot-list">
+            {warnings.map((item, index) => {
+              const row = asRecord(item);
+              return <div key={`${String(row.stage ?? index)}-${index}`}><span>{String(row.stage ?? "warning")}</span><p>{String(row.message ?? "")}</p></div>;
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function parseSnapshotJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return asRecord(parsed);
+  } catch {
+    return {};
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatSnapshotValue(value: unknown): string {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value.toFixed(2).replace(/\.00$/, "") : "-";
+  }
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return String(value);
+}
+
 function parseSeparators(value: string): string[] {
   return value
     .split("|")
@@ -1152,6 +1287,7 @@ function escapeSeparatorForInput(value: string): string {
 function TasksReportsPage() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null);
+  const [snapshotDetail, setSnapshotDetail] = useState<DataSnapshot | null>(null);
   const [message, setMessage] = useState("");
 
   async function loadRuns() {
@@ -1165,6 +1301,25 @@ function TasksReportsPage() {
       setMessage(err instanceof Error ? err.message : "任务加载失败");
     });
   }, []);
+
+  useEffect(() => {
+    if (selectedRun?.snapshot_id) {
+      openSnapshot(selectedRun.snapshot_id).catch((err: unknown) => {
+        setMessage(err instanceof Error ? err.message : "快照详情加载失败");
+      });
+    }
+  }, [selectedRun?.snapshot_id]);
+
+  async function openSnapshot(snapshotId: number) {
+    if (!snapshotId) {
+      return;
+    }
+    try {
+      setSnapshotDetail(await fetchDataSnapshot(snapshotId));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "快照详情加载失败");
+    }
+  }
 
   return (
     <div className="page-grid reports-layout">
@@ -1183,7 +1338,11 @@ function TasksReportsPage() {
                     <td><StatusBadge tone={run.status === "completed" ? "green" : run.status === "partial" ? "amber" : "red"}>{run.status}</StatusBadge></td>
                     <td>{formatDateTime(run.created_at)}</td>
                     <td className="mono">{run.steps.length}</td>
-                    <td><button className="btn btn-table" onClick={() => setSelectedRun(run)} type="button">#{run.snapshot_id}</button></td>
+                    <td>
+                      <button className="btn btn-table" onClick={() => { setSelectedRun(run); openSnapshot(run.snapshot_id); }} type="button">
+                        #{run.snapshot_id}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1200,7 +1359,9 @@ function TasksReportsPage() {
                   <span className="label">最终结论</span>
                   <h3>{selectedRun.symbol}：{String(selectedRun.result.conclusion ?? "工具编排完成")}</h3>
                   <p>成功工具 {String(selectedRun.result.tool_success_count ?? 0)} 个，失败工具 {String(selectedRun.result.tool_failed_count ?? 0)} 个。运行编号 {selectedRun.run_key}。</p>
-                  <small className="mono">snapshot #{selectedRun.snapshot_id} · {String(selectedRun.result.snapshot_summary ?? "")}</small>
+                  <button className="link-button mono" onClick={() => openSnapshot(selectedRun.snapshot_id)} type="button">
+                    snapshot #{selectedRun.snapshot_id} · {String(selectedRun.result.snapshot_summary ?? "")}
+                  </button>
                 </div>
                 <StatusBadge tone={Number(selectedRun.result.confidence ?? 0) >= 80 ? "green" : "amber"}>置信度 {String(selectedRun.result.confidence ?? 0)}%</StatusBadge>
               </div>
@@ -1211,6 +1372,7 @@ function TasksReportsPage() {
                   </button>
                 ))}
               </div>
+              <SnapshotDetail snapshot={snapshotDetail} />
             </>
           ) : <div className="empty-hint">选择一个运行记录查看详情</div>}
         </Panel>

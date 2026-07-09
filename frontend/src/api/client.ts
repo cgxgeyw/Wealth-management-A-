@@ -1172,6 +1172,10 @@ export function createDataSnapshot(symbol: string, period = "daily", limit = 120
   });
 }
 
+export function fetchDataSnapshot(snapshotId: number): Promise<DataSnapshot> {
+  return getJson<DataSnapshot>(`/api/data/snapshots/${snapshotId}`);
+}
+
 export function fetchScheduledTasks(): Promise<ScheduledTaskListResponse> {
   return getJson<ScheduledTaskListResponse>("/api/data/scheduled-tasks");
 }

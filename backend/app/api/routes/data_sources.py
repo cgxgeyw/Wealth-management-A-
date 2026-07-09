@@ -429,6 +429,14 @@ def list_snapshots(
     )
 
 
+@router.get("/snapshots/{snapshot_id}", response_model=DataSnapshotRead)
+def get_snapshot(snapshot_id: int, db: Session = Depends(get_db)) -> DataSnapshotRead:
+    snapshot = db.get(DataSnapshot, snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Data snapshot not found.")
+    return DataSnapshotRead.model_validate(snapshot)
+
+
 @router.get("/watchlist", response_model=WatchlistListResponse)
 def list_watchlist(db: Session = Depends(get_db)) -> WatchlistListResponse:
     items = db.scalars(

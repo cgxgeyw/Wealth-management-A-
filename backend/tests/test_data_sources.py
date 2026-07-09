@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 import app.services.data_fetcher as data_fetcher
@@ -515,9 +517,15 @@ def test_data_snapshot(monkeypatch) -> None:
 
     with TestClient(app) as client:
         created = client.post("/api/data/snapshots", json={"symbol": "300750", "limit": 30})
+        detail = client.get(f"/api/data/snapshots/{created.json()['id']}")
+        missing = client.get("/api/data/snapshots/999999999")
         listed = client.get("/api/data/snapshots?symbol=300750")
 
     assert created.status_code == 200
     assert created.json()["symbol"] == "300750"
+    assert detail.status_code == 200
+    assert detail.json()["id"] == created.json()["id"]
+    assert json.loads(detail.json()["snapshot_json"])["symbol"] == "300750"
+    assert missing.status_code == 404
     assert listed.status_code == 200
     assert listed.json()["items"]

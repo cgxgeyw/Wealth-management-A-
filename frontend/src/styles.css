@@ -16,6 +16,7 @@
   --red-bg: #fdecea;
   --amber: #9a5f00;
   --amber-bg: #fff5d8;
+  --blue: #2563eb;
   color: var(--text);
   background: var(--bg);
   font-family:
@@ -385,6 +386,25 @@ button {
   border-color: #f4b4ac;
   color: var(--red);
   background: var(--red-bg);
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  color: var(--blue);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .metrics-grid {
@@ -1407,6 +1427,70 @@ tbody tr:hover,
   color: var(--ink-soft);
   background: var(--panel);
   text-align: left;
+}
+
+.reference-list.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0;
+}
+
+.snapshot-detail {
+  display: grid;
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.snapshot-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.snapshot-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.snapshot-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-section > strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.snapshot-list > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 9px;
+  background: var(--panel);
+}
+
+.snapshot-list span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.snapshot-list p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .agent-row {
