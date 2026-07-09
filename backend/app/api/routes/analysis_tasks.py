@@ -1,10 +1,12 @@
+import asyncio
+import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.schemas.analysis_task import (
     AnalysisTaskCreateRequest,
     AnalysisTaskListResponse,
@@ -17,14 +19,21 @@ from app.services.analysis_tasks import (
     get_analysis_task_model,
     list_analysis_tasks,
     read_task_report,
+    run_analysis_task,
 )
 
 router = APIRouter()
 
 
 @router.post("", response_model=AnalysisTaskRead)
-def create_task(payload: AnalysisTaskCreateRequest, db: Session = Depends(get_db)) -> AnalysisTaskRead:
-    return create_analysis_task(db, payload)
+def create_task(
+    payload: AnalysisTaskCreateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> AnalysisTaskRead:
+    task = create_analysis_task(db, payload)
+    background_tasks.add_task(run_analysis_task, task.task_key, payload.model_dump(mode="json"))
+    return task
 
 
 @router.get("", response_model=AnalysisTaskListResponse)
@@ -38,6 +47,31 @@ def get_task(task_key: str, db: Session = Depends(get_db)) -> AnalysisTaskRead:
     if not task:
         raise HTTPException(status_code=404, detail="Analysis task not found.")
     return task
+
+
+@router.get("/{task_key}/events")
+async def stream_task_events(task_key: str, db: Session = Depends(get_db)) -> StreamingResponse:
+    if not get_analysis_task(db, task_key):
+        raise HTTPException(status_code=404, detail="Analysis task not found.")
+
+    async def event_stream():
+        last_payload = ""
+        for _ in range(300):
+            with SessionLocal() as event_db:
+                task = get_analysis_task(event_db, task_key)
+            if not task:
+                yield "event: error\ndata: {\"detail\":\"Analysis task not found.\"}\n\n"
+                return
+            payload = task.model_dump_json()
+            if payload != last_payload:
+                yield f"event: task\ndata: {payload}\n\n"
+                last_payload = payload
+            if task.status in {"completed", "failed", "cancelled"}:
+                yield f"event: done\ndata: {json.dumps({'status': task.status}, ensure_ascii=False)}\n\n"
+                return
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{task_key}/report", response_model=AnalysisTaskReportResponse)

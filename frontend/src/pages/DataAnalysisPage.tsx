@@ -8,6 +8,7 @@ import {
   deleteWatchlistItem,
   fetchDragonTiger,
   fetchFinancialStatements,
+  fetchAnalysisTask,
   fetchKlines,
   fetchLockupExpiry,
   fetchMacroIndicator,
@@ -611,6 +612,25 @@ export function DataAnalysisPage() {
       setLoadingDetail(false);
     }
   }
+
+  useEffect(() => {
+    if (!latestTask || !["pending", "running"].includes(latestTask.status)) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      fetchAnalysisTask(latestTask.task_key)
+        .then((task) => {
+          setLatestTask(task);
+          if (task.snapshot_id) {
+            setSnapshotId(task.snapshot_id);
+          }
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : "分析任务刷新失败");
+        });
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [latestTask?.task_key, latestTask?.status]);
 
   function changeNewsPage(direction: 1 | -1) {
     setNewsPage((current) => Math.min(Math.max(current + direction, 0), newsPageCount - 1));

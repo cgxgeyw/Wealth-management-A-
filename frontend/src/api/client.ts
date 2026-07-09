@@ -886,6 +886,14 @@ export function fetchAnalysisTasks(limit = 30): Promise<AnalysisTaskListResponse
   return getJson<AnalysisTaskListResponse>(`/api/analysis-tasks?limit=${limit}`);
 }
 
+export function fetchAnalysisTask(taskKey: string): Promise<AnalysisTask> {
+  return getJson<AnalysisTask>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}`);
+}
+
+export function analysisTaskEventsUrl(taskKey: string): string {
+  return `/api/analysis-tasks/${encodeURIComponent(taskKey)}/events`;
+}
+
 export function fetchAnalysisTaskReport(taskKey: string): Promise<AnalysisTaskReportResponse> {
   return getJson<AnalysisTaskReportResponse>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}/report`);
 }

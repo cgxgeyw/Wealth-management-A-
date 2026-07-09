@@ -15,9 +15,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   analysisTaskReportDownloadUrl,
+  analysisTaskEventsUrl,
   createAnalysisTask,
   createKnowledgeBase,
   deleteKnowledgeDocument,
+  fetchAnalysisTask,
   fetchAnalysisTaskReport,
   fetchAnalysisTasks,
   fetchAgentRun,
@@ -157,6 +159,23 @@ function Panel({
   );
 }
 
+function isTaskActive(task: AnalysisTask | null): boolean {
+  return task ? ["pending", "running"].includes(task.status) : false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForAnalysisTask(taskKey: string, maxAttempts = 120): Promise<AnalysisTask> {
+  let latest = await fetchAnalysisTask(taskKey);
+  for (let attempt = 0; attempt < maxAttempts && isTaskActive(latest); attempt += 1) {
+    await sleep(1500);
+    latest = await fetchAnalysisTask(taskKey);
+  }
+  return latest;
+}
+
 function ChatAnalysisPage() {
   const [symbol, setSymbol] = useState("300750");
   const [query, setQuery] = useState("分析 300750，给我一个 2 周交易视角。");
@@ -198,14 +217,19 @@ function ChatAnalysisPage() {
         limit: 60,
         include_report: includeReport
       });
-      const result = task.run_key ? await fetchAgentRun(task.run_key) : null;
+      setMessage(`分析任务 ${task.task_key} 已创建，等待后台执行`);
+      const completedTask = await waitForAnalysisTask(task.task_key);
+      if (completedTask.status !== "completed" || !completedTask.run_key) {
+        throw new Error(completedTask.error_message || "分析任务未生成运行记录");
+      }
+      const result = await fetchAgentRun(completedTask.run_key);
       if (!result) {
         throw new Error("分析任务未生成运行记录");
       }
       setLatestRun(result);
       await openSnapshot(result.snapshot_id);
       await loadRuns();
-      setMessage(`分析任务 ${task.task_key} 已完成`);
+      setMessage(`分析任务 ${completedTask.task_key} 已完成`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Agent 编排失败");
     } finally {
@@ -1305,13 +1329,15 @@ function TasksReportsPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadTasks() {
+  async function loadTasks(openFirst = true) {
     const result = await fetchAnalysisTasks(30);
     setTasks(result.items);
-    const nextTask = selectedTask ?? result.items[0] ?? null;
+    const nextTask = selectedTask
+      ? result.items.find((item) => item.task_key === selectedTask.task_key) ?? selectedTask
+      : result.items[0] ?? null;
     setSelectedTask(nextTask);
-    if (nextTask?.run_key) {
-      await openTask(nextTask);
+    if (openFirst && nextTask?.run_key) {
+      await openTask(nextTask, { resetReport: false, syncForm: false });
     }
   }
 
@@ -1322,6 +1348,41 @@ function TasksReportsPage() {
   }, []);
 
   useEffect(() => {
+    if (!tasks.some((task) => isTaskActive(task))) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadTasks(false).catch((err: unknown) => {
+        setMessage(err instanceof Error ? err.message : "任务刷新失败");
+      });
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [tasks, selectedTask?.task_key]);
+
+  useEffect(() => {
+    if (!selectedTask || !isTaskActive(selectedTask)) {
+      return undefined;
+    }
+    const taskKey = selectedTask.task_key;
+    const events = new EventSource(analysisTaskEventsUrl(taskKey));
+    events.addEventListener("task", (event) => {
+      const nextTask = JSON.parse((event as MessageEvent).data) as AnalysisTask;
+      setSelectedTask(nextTask);
+      setTasks((current) => current.map((item) => item.task_key === nextTask.task_key ? nextTask : item));
+    });
+    events.addEventListener("done", () => {
+      events.close();
+      loadTasks(true).catch((err: unknown) => {
+        setMessage(err instanceof Error ? err.message : "任务刷新失败");
+      });
+    });
+    events.onerror = () => {
+      events.close();
+    };
+    return () => events.close();
+  }, [selectedTask?.task_key, selectedTask?.status]);
+
+  useEffect(() => {
     if (selectedRun?.snapshot_id) {
       openSnapshot(selectedRun.snapshot_id).catch((err: unknown) => {
         setMessage(err instanceof Error ? err.message : "快照详情加载失败");
@@ -1329,11 +1390,16 @@ function TasksReportsPage() {
     }
   }, [selectedRun?.snapshot_id]);
 
-  async function openTask(task: AnalysisTask) {
+  async function openTask(task: AnalysisTask, options: { resetReport?: boolean; syncForm?: boolean } = {}) {
+    const { resetReport = true, syncForm = true } = options;
     setSelectedTask(task);
-    setTaskSymbol(task.symbol);
-    setTaskQuery(task.query || "生成标准 A 股投研分析报告。");
-    setReportDetail(null);
+    if (syncForm) {
+      setTaskSymbol(task.symbol);
+      setTaskQuery(task.query || "生成标准 A 股投研分析报告。");
+    }
+    if (resetReport) {
+      setReportDetail(null);
+    }
     try {
       if (task.run_key) {
         const run = await fetchAgentRun(task.run_key);
@@ -1362,9 +1428,12 @@ function TasksReportsPage() {
         limit: 80,
         include_report: true
       });
-      await loadTasks();
-      await openTask(task);
-      setMessage(`分析任务 ${task.task_key} 已完成`);
+      setTasks((current) => [task, ...current.filter((item) => item.task_key !== task.task_key)]);
+      setSelectedTask(task);
+      setSelectedRun(null);
+      setSnapshotDetail(null);
+      setReportDetail(null);
+      setMessage(`分析任务 ${task.task_key} 已创建，后台执行中`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "分析任务创建失败");
     } finally {
@@ -1409,7 +1478,7 @@ function TasksReportsPage() {
           title="分析任务队列"
           actions={
             <>
-              <button className="btn btn-secondary" disabled={loading} onClick={loadTasks} type="button">刷新</button>
+              <button className="btn btn-secondary" disabled={loading} onClick={() => loadTasks()} type="button">刷新</button>
               <button className="btn btn-primary" disabled={loading} onClick={startStandardTask} type="button">{loading ? "运行中" : "新建标准任务"}</button>
             </>
           }

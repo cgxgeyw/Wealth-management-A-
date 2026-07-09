@@ -35,6 +35,8 @@ from app.schemas.data_source import (
     DataSnapshotRead,
 )
 from app.schemas.agent_run import AgentRunRead
+from app.schemas.analysis_task import AnalysisTaskCreateRequest
+from app.services.analysis_tasks import run_analysis_task_inline
 
 
 def fake_snapshot(snapshot_id: int = 901) -> DataSnapshotRead:
@@ -97,16 +99,69 @@ def test_analysis_task_lifecycle_and_report(monkeypatch, tmp_path) -> None:
         download = client.get(f"/api/analysis-tasks/{task_key}/report/download")
 
     assert created.status_code == 200
-    assert created.json()["status"] == "completed"
-    assert created.json()["run_key"] == "AR-PYTEST"
-    assert created.json()["snapshot_id"] == 902
-    assert created.json()["report_format"] == "markdown"
+    assert created.json()["status"] == "pending"
     assert listed.status_code == 200
     assert any(item["task_key"] == task_key for item in listed.json()["items"])
     assert detail.status_code == 200
+    assert detail.json()["status"] == "completed"
+    assert detail.json()["run_key"] == "AR-PYTEST"
+    assert detail.json()["snapshot_id"] == 902
+    assert detail.json()["report_format"] == "markdown"
     assert report.status_code == 200
     assert "测试报告" in report.json()["content"]
     assert download.status_code == 200
+
+
+def test_analysis_task_inline_worker(monkeypatch, tmp_path) -> None:
+    report_path = tmp_path / "inline-report.md"
+    report_path.write_text("# Inline\n", encoding="utf-8")
+
+    def fake_create_agent_run(db, payload) -> AgentRunRead:
+        return AgentRunRead(
+            id=43,
+            run_key="AR-INLINE",
+            symbol=payload.symbol,
+            query=payload.query,
+            mode=payload.mode,
+            status="completed",
+            snapshot_id=903,
+            agent_keys=payload.agent_keys,
+            steps=[
+                {
+                    "agent_key": "research_director",
+                    "agent_name": "投研总监",
+                    "tool_key": "document.write",
+                    "status": "success",
+                    "params": {},
+                    "output_preview": {"path": str(report_path)},
+                    "error": "",
+                }
+            ],
+            result={"conclusion": "inline"},
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+    monkeypatch.setattr("app.services.analysis_tasks.create_agent_run", fake_create_agent_run)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/analysis-tasks",
+            json={"symbol": "300750", "query": "inline", "agent_keys": ["research_director"]},
+        )
+        task_key = created.json()["task_key"]
+
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        result = run_analysis_task_inline(
+            db,
+            task_key,
+            AnalysisTaskCreateRequest(symbol="300750", query="inline", agent_keys=["research_director"]),
+        )
+
+    assert result.status == "completed"
+    assert result.run_key == "AR-INLINE"
 
 
 def test_agent_config_update_render_and_rollback() -> None:

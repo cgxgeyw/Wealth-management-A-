@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.analysis_task import AnalysisTask
 from app.schemas.agent_run import AgentRunRead
 from app.schemas.analysis_task import AnalysisTaskCreateRequest, AnalysisTaskRead
@@ -41,7 +42,28 @@ def create_analysis_task(db: Session, payload: AnalysisTaskCreateRequest) -> Ana
     db.add(task)
     db.commit()
     db.refresh(task)
+    return analysis_task_read(task)
 
+
+def run_analysis_task(task_key: str, payload_data: dict) -> None:
+    with SessionLocal() as db:
+        ensure_analysis_task_schema(db)
+        task = db.scalar(select(AnalysisTask).where(AnalysisTask.task_key == task_key))
+        if not task:
+            return
+        payload = AnalysisTaskCreateRequest(**payload_data)
+        _execute_analysis_task(db, task, payload)
+
+
+def run_analysis_task_inline(db: Session, task_key: str, payload: AnalysisTaskCreateRequest) -> AnalysisTaskRead:
+    task = db.scalar(select(AnalysisTask).where(AnalysisTask.task_key == task_key))
+    if not task:
+        raise ValueError("Analysis task not found.")
+    _execute_analysis_task(db, task, payload)
+    return analysis_task_read(task)
+
+
+def _execute_analysis_task(db: Session, task: AnalysisTask, payload: AnalysisTaskCreateRequest) -> None:
     try:
         _set_task_state(db, task, "running", "fetching_data", 20)
         run = create_agent_run(db, payload)
@@ -56,7 +78,6 @@ def create_analysis_task(db: Session, payload: AnalysisTaskCreateRequest) -> Ana
     except Exception as exc:
         task.error_message = str(exc)
         _set_task_state(db, task, "failed", "failed", 100)
-    return analysis_task_read(task)
 
 
 def list_analysis_tasks(db: Session, limit: int = 30) -> list[AnalysisTaskRead]:
