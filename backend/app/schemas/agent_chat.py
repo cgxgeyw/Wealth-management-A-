@@ -25,6 +25,15 @@ class AgentChatToolCall(BaseModel):
     error: str = ""
 
 
+class AgentChatKnowledgeHit(BaseModel):
+    citation: str
+    title: str
+    snippet: str
+    score: float
+    source: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
 class AgentChatResponse(BaseModel):
     agent_key: str
     agent_name: str
@@ -32,4 +41,5 @@ class AgentChatResponse(BaseModel):
     model_status: str
     model: str = ""
     tool_calls: list[AgentChatToolCall] = Field(default_factory=list)
+    knowledge_hits: list[AgentChatKnowledgeHit] = Field(default_factory=list)
     created_at: datetime

@@ -3,6 +3,8 @@ import {
   BarChart3,
   Bot,
   BrainCircuit,
+  ChevronLeft,
+  ChevronRight,
   Database,
   FileText,
   LibraryBig,
@@ -110,7 +112,7 @@ const pageMeta: Record<PageKey, { title: string; subtitle: string }> = {
   },
   chat: {
     title: "Agent 对话",
-    subtitle: "选择一个 Agent 单独聊天，工具调用只服务当前问答，不触发长流程报告。"
+    subtitle: ""
   },
   multi_agent: {
     title: "多智能体分析",
@@ -174,12 +176,10 @@ function isTaskActive(task: AnalysisTask | null): boolean {
 function ChatAnalysisPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [selectedKey, setSelectedKey] = useState("technical");
-  const [symbol, setSymbol] = useState("300750");
   const [input, setInput] = useState("300750 现在技术面怎么看？");
-  const [messages, setMessages] = useState<AgentChatMessage[]>([
-    { role: "assistant", content: "选择一个 Agent 后直接提问。我会只用这个 Agent 的提示词和工具权限回答，不会启动多智能体长流程。" }
-  ]);
+  const [messages, setMessages] = useState<AgentChatMessage[]>([]);
   const [latestResponse, setLatestResponse] = useState<AgentChatResponse | null>(null);
+  const [agentListCollapsed, setAgentListCollapsed] = useState(false);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -210,7 +210,6 @@ function ChatAnalysisPage() {
     try {
       const response = await sendAgentChat(selectedKey, {
         message: text,
-        symbol,
         variables: { period: "daily" },
         history: messages,
         max_tool_calls: 4
@@ -226,52 +225,58 @@ function ChatAnalysisPage() {
   }
 
   const selectedAgent = agents.find((agent) => agent.key === selectedKey) ?? null;
-  const selectedTools = selectedAgent?.tools ?? [];
 
   return (
-    <div className="chat-layout">
-      <Panel title="Agent">
-        <div className="agent-list">
-          {agents.map((agent) => (
-            <button className={selectedKey === agent.key ? "agent-row active" : "agent-row"} key={agent.key} onClick={() => setSelectedKey(agent.key)} type="button">
-              <div className="agent-avatar"><Bot size={15} /></div>
-              <div>
-                <strong>{agent.name}</strong>
-                <span>{agent.role || agent.key}</span>
-              </div>
-              <StatusBadge tone={agent.tools.length ? "green" : "amber"}>{agent.tools.length} tools</StatusBadge>
+    <div className={agentListCollapsed ? "chat-layout agent-collapsed" : "chat-layout"}>
+      <Panel
+        title={agentListCollapsed ? "" : "Agent"}
+        className="chat-agent-panel"
+        actions={
+          <button className="icon-btn" onClick={() => setAgentListCollapsed((current) => !current)} title={agentListCollapsed ? "展开 Agent 列表" : "收起 Agent 列表"} type="button">
+            {agentListCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          </button>
+        }
+      >
+        {agentListCollapsed ? (
+          <div className="agent-rail">
+            <button className="agent-rail-toggle" onClick={() => setAgentListCollapsed(false)} type="button">
+              <ChevronRight size={15} />
             </button>
-          ))}
-          {agents.length === 0 ? <div className="empty-hint">暂无可用 Agent</div> : null}
-        </div>
+            {agents.map((agent) => (
+              <button className={selectedKey === agent.key ? "agent-rail-item active" : "agent-rail-item"} key={agent.key} onClick={() => setSelectedKey(agent.key)} title={agent.name} type="button">
+                <Bot size={15} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="agent-list">
+            {agents.map((agent) => (
+              <button className={selectedKey === agent.key ? "agent-row active" : "agent-row"} key={agent.key} onClick={() => setSelectedKey(agent.key)} type="button">
+                <div className="agent-avatar"><Bot size={15} /></div>
+                <div>
+                  <strong>{agent.name}</strong>
+                  <span>{agent.role || agent.key}</span>
+                </div>
+              </button>
+            ))}
+            {agents.length === 0 ? <div className="empty-hint">暂无可用 Agent</div> : null}
+          </div>
+        )}
       </Panel>
 
       <Panel
         title={selectedAgent ? `${selectedAgent.name} 对话` : "Agent 对话"}
-        actions={
-          <>
-            <input className="input mono symbol-input" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
-            <button className="btn btn-secondary" onClick={() => setMessages([])} type="button">清空</button>
-          </>
-        }
+        actions={<button className="btn btn-secondary" onClick={() => { setMessages([]); setLatestResponse(null); }} type="button">清空</button>}
       >
         {message ? <div className="notice error">{message}</div> : null}
-        <div className="chat-agent-summary">
-          <div>
-            <span className="label">当前角色</span>
-            <strong>{selectedAgent?.description ?? "选择一个 Agent 开始"}</strong>
-          </div>
-          <StatusBadge tone={latestResponse?.model_status === "llm_completed" ? "green" : "amber"}>
-            {latestResponse?.model_status ?? "ready"}
-          </StatusBadge>
-        </div>
         <div className="message-list chat-thread">
           {messages.map((item, index) => (
             <div className={`msg ${item.role === "user" ? "user" : "agent"}`} key={`${item.role}-${index}`}>
               <p>{item.content}</p>
             </div>
           ))}
-          {sending ? <div className="msg agent muted"><p>Agent 正在读取工具上下文并回复...</p></div> : null}
+          {messages.length === 0 ? <div className="empty-hint">暂无消息</div> : null}
+          {sending ? <div className="msg agent muted"><p>正在回复...</p></div> : null}
         </div>
         <div className="composer">
           <input
@@ -287,18 +292,15 @@ function ChatAnalysisPage() {
         </div>
       </Panel>
 
-      <Panel title="工具与引用">
-        <div className="reference-list compact">
-          {selectedTools.map((tool) => <button key={tool} type="button">{tool}</button>)}
-          {selectedTools.length === 0 ? <button type="button">未配置工具</button> : null}
-        </div>
-        <div className="snapshot-list tool-call-list">
-          {latestResponse?.tool_calls.map((call) => (
-            <div key={`${call.tool_key}-${call.status}`}>
-              <span>{call.tool_key} · {call.status}</span>
-              <p>{call.status === "success" ? String(call.output_preview.summary ?? "已获取上下文") : call.error}</p>
+      <Panel title="知识库命中">
+        <div className="snapshot-list knowledge-hit-list">
+          {latestResponse?.knowledge_hits.map((hit) => (
+            <div key={hit.citation}>
+              <span className="mono">{hit.citation}</span>
+              <strong>{hit.title}</strong>
+              <p>{hit.snippet}</p>
             </div>
-          )) ?? <div className="empty-hint">最近一次工具调用会显示在这里</div>}
+          )) ?? <div className="empty-hint">暂无命中</div>}
         </div>
       </Panel>
     </div>
@@ -1809,7 +1811,7 @@ export function App() {
         <header className="topbar">
           <div>
             <h1>{activeMeta.title}</h1>
-            <p>{activeMeta.subtitle}</p>
+            {activeMeta.subtitle ? <p>{activeMeta.subtitle}</p> : null}
           </div>
           <div className="topbar-actions">
             <StatusBadge tone={health ? "green" : error ? "red" : "amber"}>

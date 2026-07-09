@@ -242,6 +242,10 @@ button {
   margin-top: 12px;
 }
 
+.chat-layout.agent-collapsed {
+  grid-template-columns: 52px minmax(0, 1fr) 300px;
+}
+
 .multi-agent-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -1347,25 +1351,33 @@ tbody tr.row-active {
   font-size: 12px;
 }
 
-.symbol-input {
-  width: 104px;
+.chat-agent-panel {
+  overflow: hidden;
 }
 
-.chat-agent-summary {
+.agent-rail {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-  border-bottom: 1px solid var(--border);
-  padding: 12px;
+  justify-items: center;
+  gap: 8px;
+  padding: 8px;
 }
 
-.chat-agent-summary strong {
-  display: block;
-  margin-top: 4px;
+.agent-rail-toggle,
+.agent-rail-item {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   color: var(--ink-soft);
-  font-size: 13px;
-  line-height: 1.45;
+  background: var(--panel);
+}
+
+.agent-rail-item.active {
+  border-color: var(--ink);
+  color: #ffffff;
+  background: var(--ink);
 }
 
 .stage-strip {
@@ -1537,8 +1549,19 @@ tbody tr.row-active {
   line-height: 1.5;
 }
 
-.tool-call-list {
+.tool-call-list,
+.knowledge-hit-list {
   padding: 0 12px 12px;
+}
+
+.knowledge-hit-list {
+  max-height: 68vh;
+  overflow-y: auto;
+}
+
+.knowledge-hit-list strong {
+  color: var(--ink);
+  font-size: 12px;
 }
 
 .preset-grid {

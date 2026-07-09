@@ -124,6 +124,15 @@ export interface AgentChatToolCall {
   error: string;
 }
 
+export interface AgentChatKnowledgeHit {
+  citation: string;
+  title: string;
+  snippet: string;
+  score: number;
+  source: string;
+  tags: string[];
+}
+
 export interface AgentChatResponse {
   agent_key: string;
   agent_name: string;
@@ -131,6 +140,7 @@ export interface AgentChatResponse {
   model_status: string;
   model: string;
   tool_calls: AgentChatToolCall[];
+  knowledge_hits: AgentChatKnowledgeHit[];
   created_at: string;
 }
 

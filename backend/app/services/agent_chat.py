@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.agent import AgentConfig
-from app.schemas.agent_chat import AgentChatRequest, AgentChatResponse, AgentChatToolCall
+from app.schemas.agent_chat import AgentChatKnowledgeHit, AgentChatRequest, AgentChatResponse, AgentChatToolCall
+from app.schemas.knowledge import KnowledgeSearchRequest
 from app.services.agent_tools import AgentToolError, execute_tool, get_tool_spec
+from app.services.knowledge_base import search_knowledge
 from app.services.stock_catalog import get_stock_profile
 
 
@@ -24,13 +26,14 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
     symbol = _resolve_symbol(payload)
     variables = _build_variables(symbol, payload)
     tool_calls = _run_context_tools(db, agent, symbol, payload)
+    knowledge_hits = _search_knowledge_hits(db, payload, symbol)
     fallback = _fallback_reply(agent, payload, symbol, tool_calls)
     model_status = "fallback_no_api_key"
     model = ""
     content = fallback
     if settings.llm_api_key:
         try:
-            content = _call_llm(agent, payload, variables, tool_calls)
+            content = _call_llm(agent, payload, variables, tool_calls, knowledge_hits)
             model_status = "llm_completed"
             model = settings.llm_model
         except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as exc:
@@ -44,6 +47,7 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
         model_status=model_status,
         model=model,
         tool_calls=tool_calls,
+        knowledge_hits=knowledge_hits,
         created_at=datetime.now(ZoneInfo("Asia/Shanghai")),
     )
 
@@ -146,6 +150,7 @@ def _call_llm(
     payload: AgentChatRequest,
     variables: dict[str, str],
     tool_calls: list[AgentChatToolCall],
+    knowledge_hits: list[AgentChatKnowledgeHit],
 ) -> str:
     messages: list[dict[str, str]] = [
         {
@@ -162,6 +167,7 @@ def _call_llm(
                 {
                     "task_prompt": _render(agent.task_prompt, variables),
                     "tool_context": [call.model_dump(mode="json") for call in tool_calls],
+                    "knowledge_hits": [item.model_dump(mode="json") for item in knowledge_hits],
                     "question": payload.message,
                 },
                 ensure_ascii=False,
@@ -179,6 +185,32 @@ def _call_llm(
         )
         response.raise_for_status()
     return str(response.json()["choices"][0]["message"]["content"])
+
+
+def _search_knowledge_hits(db: Session, payload: AgentChatRequest, symbol: str) -> list[AgentChatKnowledgeHit]:
+    try:
+        result = search_knowledge(
+            db,
+            KnowledgeSearchRequest(
+                query=payload.message,
+                symbols=[symbol] if symbol else [],
+                top_k=5,
+                require_citations=True,
+            ),
+        )
+    except Exception:
+        return []
+    return [
+        AgentChatKnowledgeHit(
+            citation=item.citation,
+            title=item.title,
+            snippet=item.snippet,
+            score=item.score,
+            source=item.source,
+            tags=item.tags,
+        )
+        for item in result.items
+    ]
 
 
 def _fallback_reply(
