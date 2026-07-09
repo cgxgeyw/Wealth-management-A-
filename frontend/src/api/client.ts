@@ -264,6 +264,26 @@ export interface KnowledgeDocumentRechunkPayload {
   separators: string[];
 }
 
+export interface KnowledgeImportTask {
+  id: number;
+  knowledge_base_id: number;
+  document_id: number;
+  filename: string;
+  content_type: string;
+  file_size: number;
+  status: string;
+  stage: string;
+  message: string;
+  chunk_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeImportTaskListResponse {
+  items: KnowledgeImportTask[];
+}
+
 export interface KnowledgeSearchItem {
   chunk_id: number;
   document_id: number;
@@ -850,6 +870,17 @@ export function fetchKnowledgeDocuments(
     params.set("knowledge_base_id", String(knowledgeBaseId));
   }
   return getJson<KnowledgeDocumentListResponse>(`/api/knowledge/documents?${params}`);
+}
+
+export function fetchKnowledgeImportTasks(
+  knowledgeBaseId?: number,
+  limit = 30
+): Promise<KnowledgeImportTaskListResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (knowledgeBaseId) {
+    params.set("knowledge_base_id", String(knowledgeBaseId));
+  }
+  return getJson<KnowledgeImportTaskListResponse>(`/api/knowledge/import-tasks?${params}`);
 }
 
 export function fetchKnowledgeDocument(documentId: number): Promise<KnowledgeDocumentDetail> {

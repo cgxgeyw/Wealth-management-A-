@@ -16,6 +16,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
     KnowledgeFaissStatus,
+    KnowledgeImportTaskListResponse,
     KnowledgeReindexAllResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
@@ -26,6 +27,7 @@ from app.services.knowledge_base import (
     create_document_from_file,
     delete_document,
     get_document,
+    list_import_tasks,
     list_knowledge_bases,
     list_documents,
     rechunk_document,
@@ -64,6 +66,15 @@ def patch_base(
     if not result:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
     return result
+
+
+@router.get("/import-tasks", response_model=KnowledgeImportTaskListResponse)
+def import_tasks(
+    knowledge_base_id: int | None = None,
+    limit: int = 30,
+    db: Session = Depends(get_db),
+) -> KnowledgeImportTaskListResponse:
+    return list_import_tasks(db, knowledge_base_id=knowledge_base_id, limit=limit)
 
 
 @router.get("/documents", response_model=KnowledgeDocumentListResponse)

@@ -93,6 +93,26 @@ class KnowledgeBaseListResponse(BaseModel):
     items: list[KnowledgeBaseRead]
 
 
+class KnowledgeImportTaskRead(BaseModel):
+    id: int
+    knowledge_base_id: int
+    document_id: int
+    filename: str
+    content_type: str
+    file_size: int
+    status: str
+    stage: str
+    message: str
+    chunk_count: int
+    metadata: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeImportTaskListResponse(BaseModel):
+    items: list[KnowledgeImportTaskRead]
+
+
 class KnowledgeChunkRead(BaseModel):
     id: int
     document_id: int

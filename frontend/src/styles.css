@@ -837,6 +837,45 @@ tbody tr:hover,
   font-size: 12px;
 }
 
+.import-task-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.import-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  color: var(--ink);
+  background: var(--panel);
+  text-align: left;
+}
+
+.import-task-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.import-task-row div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.import-task-row span,
+.import-task-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.import-task-row small {
+  grid-column: 1 / -1;
+}
+
 .search-row,
 .toolbar,
 .composer {

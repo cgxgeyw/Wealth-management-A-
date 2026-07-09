@@ -12,7 +12,14 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeDocument, KnowledgeEmbedding, KnowledgeRetrievalLog
+from app.models.knowledge import (
+    KnowledgeBase,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeEmbedding,
+    KnowledgeImportTask,
+    KnowledgeRetrievalLog,
+)
 from app.schemas.knowledge import (
     KnowledgeBaseCreateRequest,
     KnowledgeBaseListResponse,
@@ -25,6 +32,8 @@ from app.schemas.knowledge import (
     KnowledgeDocumentRechunkRequest,
     KnowledgeDocumentRead,
     KnowledgeDocumentUpdateRequest,
+    KnowledgeImportTaskListResponse,
+    KnowledgeImportTaskRead,
     KnowledgeReindexAllResponse,
     KnowledgeSearchItem,
     KnowledgeSearchRequest,
@@ -54,6 +63,7 @@ def _ensure_knowledge_schema(db: Session) -> None:
     KnowledgeDocument.__table__.create(bind=db.get_bind(), checkfirst=True)
     KnowledgeChunk.__table__.create(bind=db.get_bind(), checkfirst=True)
     KnowledgeEmbedding.__table__.create(bind=db.get_bind(), checkfirst=True)
+    KnowledgeImportTask.__table__.create(bind=db.get_bind(), checkfirst=True)
     KnowledgeRetrievalLog.__table__.create(bind=db.get_bind(), checkfirst=True)
     _ensure_columns(
         db,
@@ -148,6 +158,37 @@ def knowledge_base_read(db: Session, item: KnowledgeBase) -> KnowledgeBaseRead:
     )
 
 
+def list_import_tasks(
+    db: Session,
+    knowledge_base_id: int | None = None,
+    limit: int = 30,
+) -> KnowledgeImportTaskListResponse:
+    ensure_knowledge_fts(db)
+    query = select(KnowledgeImportTask).order_by(KnowledgeImportTask.id.desc()).limit(min(max(limit, 1), 100))
+    if knowledge_base_id:
+        query = query.where(KnowledgeImportTask.knowledge_base_id == knowledge_base_id)
+    tasks = db.scalars(query).all()
+    return KnowledgeImportTaskListResponse(items=[import_task_read(item) for item in tasks])
+
+
+def import_task_read(task: KnowledgeImportTask) -> KnowledgeImportTaskRead:
+    return KnowledgeImportTaskRead(
+        id=task.id,
+        knowledge_base_id=task.knowledge_base_id,
+        document_id=task.document_id,
+        filename=task.filename,
+        content_type=task.content_type,
+        file_size=task.file_size,
+        status=task.status,
+        stage=task.stage,
+        message=task.message,
+        chunk_count=task.chunk_count,
+        metadata=_json_dict(task.metadata_json),
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
 def create_document(db: Session, payload: KnowledgeDocumentCreateRequest) -> KnowledgeDocumentDetail:
     ensure_knowledge_fts(db)
     knowledge_base = db.get(KnowledgeBase, payload.knowledge_base_id) or _ensure_default_knowledge_base(db)
@@ -192,23 +233,69 @@ def create_document_from_file(
     chunk_overlap: int | None = None,
     separators: list[str] | None = None,
 ) -> KnowledgeDocumentDetail:
+    ensure_knowledge_fts(db)
     knowledge_base = db.get(KnowledgeBase, knowledge_base_id) or _ensure_default_knowledge_base(db)
-    parsed = _parse_uploaded_file(filename, content_type, data)
-    payload = KnowledgeDocumentCreateRequest(
-        title=parsed["title"],
-        content=parsed["content"],
+    task = KnowledgeImportTask(
         knowledge_base_id=knowledge_base.id,
-        doc_type=parsed["doc_type"],
-        source=f"upload:{filename}",
-        symbols=[],
-        tags=parsed["tags"],
-        metadata=parsed["metadata"],
-        chunking_strategy=chunking_strategy or knowledge_base.chunking_strategy,
-        chunk_size=chunk_size or knowledge_base.chunk_size,
-        chunk_overlap=chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
-        separators=separators or _json_list(knowledge_base.separators_json),
+        filename=filename,
+        content_type=content_type,
+        file_size=len(data),
+        status="processing",
+        stage="parse",
+        message="正在解析文件",
+        metadata_json=json.dumps(
+            {
+                "chunking_strategy": chunking_strategy or knowledge_base.chunking_strategy,
+                "chunk_size": chunk_size or knowledge_base.chunk_size,
+                "chunk_overlap": chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
+                "separators": separators or _json_list(knowledge_base.separators_json),
+            },
+            ensure_ascii=False,
+        ),
     )
-    return create_document(db, payload)
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    task_id = task.id
+    try:
+        parsed = _parse_uploaded_file(filename, content_type, data)
+        task.stage = "index"
+        task.message = "正在分块和索引"
+        db.add(task)
+        db.commit()
+        payload = KnowledgeDocumentCreateRequest(
+            title=parsed["title"],
+            content=parsed["content"],
+            knowledge_base_id=knowledge_base.id,
+            doc_type=parsed["doc_type"],
+            source=f"upload:{filename}",
+            symbols=[],
+            tags=parsed["tags"],
+            metadata={**parsed["metadata"], "import_task_id": task.id},
+            chunking_strategy=chunking_strategy or knowledge_base.chunking_strategy,
+            chunk_size=chunk_size or knowledge_base.chunk_size,
+            chunk_overlap=chunk_overlap if chunk_overlap is not None else knowledge_base.chunk_overlap,
+            separators=separators or _json_list(knowledge_base.separators_json),
+        )
+        document = create_document(db, payload)
+        task.document_id = document.id
+        task.chunk_count = document.chunk_count
+        task.status = "completed"
+        task.stage = "completed"
+        task.message = "导入完成"
+        db.add(task)
+        db.commit()
+        return document
+    except Exception as exc:
+        db.rollback()
+        task = db.get(KnowledgeImportTask, task_id)
+        if task:
+            task.status = "failed"
+            task.stage = "failed"
+            task.message = str(exc)
+            db.add(task)
+            db.commit()
+        raise
 
 
 def list_documents(

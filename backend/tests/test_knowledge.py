@@ -72,6 +72,20 @@ def test_knowledge_document_upload_extracts_file_content(monkeypatch) -> None:
     assert document["chunk_count"] >= 1
     assert "电网侧储能" in document["content"]
     assert document["metadata"]["filename"] == "储能行业调研.md"
+    assert document["metadata"]["import_task_id"]
+
+    with TestClient(app) as client:
+        tasks = client.get("/api/knowledge/import-tasks")
+
+    assert tasks.status_code == 200
+    task_items = tasks.json()["items"]
+    assert task_items
+    latest = task_items[0]
+    assert latest["filename"] == "储能行业调研.md"
+    assert latest["document_id"] == document["id"]
+    assert latest["status"] == "completed"
+    assert latest["stage"] == "completed"
+    assert latest["chunk_count"] == document["chunk_count"]
 
 
 def test_knowledge_bases_upload_chunking_and_edit_chunks(monkeypatch) -> None:
@@ -130,6 +144,32 @@ def test_knowledge_bases_upload_chunking_and_edit_chunks(monkeypatch) -> None:
         chunk = updated.json()
         assert "编辑后的分块正文" in chunk["content"]
         assert chunk["tags"] == ["储能", "新能源车"]
+
+
+def test_knowledge_upload_failure_records_import_task(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
+
+    with TestClient(app) as client:
+        failed = client.post(
+            "/api/knowledge/documents/upload",
+            files={
+                "file": (
+                    "空白资料.txt",
+                    "   ",
+                    "text/plain; charset=utf-8",
+                )
+            },
+        )
+        assert failed.status_code == 400
+
+        tasks = client.get("/api/knowledge/import-tasks")
+        assert tasks.status_code == 200
+        latest = tasks.json()["items"][0]
+        assert latest["filename"] == "空白资料.txt"
+        assert latest["status"] == "failed"
+        assert latest["stage"] == "failed"
+        assert latest["document_id"] == 0
+        assert "extractable text" in latest["message"]
 
 
 def test_knowledge_base_update_and_document_rechunk(monkeypatch) -> None:

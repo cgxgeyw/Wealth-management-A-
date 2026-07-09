@@ -26,6 +26,7 @@ import {
   fetchKnowledgeDocument,
   fetchKnowledgeFaissStatus,
   fetchKnowledgeDocuments,
+  fetchKnowledgeImportTasks,
   reindexAllKnowledgeDocuments,
   reindexKnowledgeDocument,
   rechunkKnowledgeDocument,
@@ -52,6 +53,7 @@ import {
   type KnowledgeDocument,
   type KnowledgeDocumentDetail,
   type KnowledgeFaissStatus,
+  type KnowledgeImportTask,
   type KnowledgeSearchItem
 } from "./api/client";
 import { DataAnalysisPage } from "./pages/DataAnalysisPage";
@@ -544,6 +546,7 @@ function KnowledgeBasePage() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState<number>(1);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [importTasks, setImportTasks] = useState<KnowledgeImportTask[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
   const [matches, setMatches] = useState<KnowledgeSearchItem[]>([]);
   const [faissStatus, setFaissStatus] = useState<KnowledgeFaissStatus | null>(null);
@@ -591,6 +594,11 @@ function KnowledgeBasePage() {
     setDocuments(result.items);
   }
 
+  async function loadImportTasks(knowledgeBaseId = selectedBaseId) {
+    const result = await fetchKnowledgeImportTasks(knowledgeBaseId, 30);
+    setImportTasks(result.items);
+  }
+
   async function loadFaissStatus() {
     const result = await fetchKnowledgeFaissStatus();
     setFaissStatus(result);
@@ -599,7 +607,8 @@ function KnowledgeBasePage() {
   useEffect(() => {
     async function bootstrap() {
       const base = await loadKnowledgeBases();
-      await Promise.all([loadDocuments("", base?.id ?? selectedBaseId), loadFaissStatus()]);
+      const baseId = base?.id ?? selectedBaseId;
+      await Promise.all([loadDocuments("", baseId), loadImportTasks(baseId), loadFaissStatus()]);
     }
     bootstrap().catch((err: unknown) => {
       setMessage(err instanceof Error ? err.message : "知识库加载失败");
@@ -617,7 +626,7 @@ function KnowledgeBasePage() {
       setChunkOverlap(nextBase.chunk_overlap);
       setSeparatorsText(nextBase.separators.map(escapeSeparatorForInput).join("|"));
     }
-    await loadDocuments("", nextBaseId);
+    await Promise.all([loadDocuments("", nextBaseId), loadImportTasks(nextBaseId)]);
   }
 
   async function createBase() {
@@ -637,7 +646,7 @@ function KnowledgeBasePage() {
       setNewBaseName("");
       setNewBaseDescription("");
       await loadKnowledgeBases(created.id);
-      await loadDocuments("", created.id);
+      await Promise.all([loadDocuments("", created.id), loadImportTasks(created.id)]);
       setSelectedDocument(null);
       setMessage(`已创建知识库：${created.name}`);
     } catch (err) {
@@ -693,6 +702,7 @@ function KnowledgeBasePage() {
       setSelectedFiles([]);
       await loadDocuments("", selectedBaseId);
       await loadKnowledgeBases(selectedBaseId);
+      await loadImportTasks(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文件导入失败");
@@ -721,6 +731,7 @@ function KnowledgeBasePage() {
       setFaissStatus(result.faiss);
       setMessage(`全量重建完成：${result.reindexed}/${result.total} 篇，失败 ${result.failed} 篇`);
       await loadDocuments(docQuery, selectedBaseId);
+      await loadImportTasks(selectedBaseId);
       if (selectedDocument) {
         setSelectedDocument(await fetchKnowledgeDocument(selectedDocument.id));
       }
@@ -747,6 +758,7 @@ function KnowledgeBasePage() {
       setSelectedDocument(detail);
       setMessage(`已重建：${detail.title}，${detail.chunk_count} 个 chunks`);
       await loadDocuments(docQuery, selectedBaseId);
+      await loadImportTasks(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档重建失败");
@@ -769,6 +781,7 @@ function KnowledgeBasePage() {
       setSelectedDocument(detail);
       setMessage(`已重新切分：${detail.title}，${detail.chunk_count} 个 chunks`);
       await loadDocuments(docQuery, selectedBaseId);
+      await loadImportTasks(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档重新切分失败");
@@ -786,6 +799,7 @@ function KnowledgeBasePage() {
       setMessage(`已删除：${removed.title}`);
       await loadDocuments(docQuery, selectedBaseId);
       await loadKnowledgeBases(selectedBaseId);
+      await loadImportTasks(selectedBaseId);
       await loadFaissStatus();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "文档删除失败");
@@ -988,6 +1002,32 @@ function KnowledgeBasePage() {
             <label>新知识库名称<input className="input" value={newBaseName} onChange={(event) => setNewBaseName(event.target.value)} /></label>
             <label>描述<input className="input" value={newBaseDescription} onChange={(event) => setNewBaseDescription(event.target.value)} /></label>
             <button className="btn btn-primary full" onClick={createBase} type="button">创建知识库</button>
+          </div>
+        </Panel>
+        <Panel
+          title="导入任务"
+          actions={<button className="btn btn-secondary" onClick={() => loadImportTasks(selectedBaseId)} type="button">刷新</button>}
+        >
+          <div className="import-task-list">
+            {importTasks.map((task) => (
+              <button
+                className="import-task-row"
+                disabled={!task.document_id}
+                key={task.id}
+                onClick={() => task.document_id ? openDocument(task.document_id) : undefined}
+                type="button"
+              >
+                <div>
+                  <strong>{task.filename}</strong>
+                  <span>{task.stage} · {task.message}</span>
+                </div>
+                <StatusBadge tone={task.status === "completed" ? "green" : task.status === "failed" ? "red" : "amber"}>
+                  {task.status}
+                </StatusBadge>
+                <small className="mono">{Math.ceil(task.file_size / 1024)} KB · {task.chunk_count} chunks</small>
+              </button>
+            ))}
+            {importTasks.length === 0 ? <div className="empty-hint">暂无导入任务</div> : null}
           </div>
         </Panel>
         <Panel
