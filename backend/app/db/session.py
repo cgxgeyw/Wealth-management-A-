@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
 
@@ -38,11 +38,26 @@ def get_db():
 
 def init_db() -> None:
     from app.models import agent  # noqa: F401
+    from app.models import agent_audit  # noqa: F401
+    from app.models import agent_skill  # noqa: F401
     from app.models import analysis_task  # noqa: F401
     from app.models import data_source  # noqa: F401
     from app.models import knowledge  # noqa: F401
+    from app.models import model_config  # noqa: F401
+    from app.models import stock_catalog  # noqa: F401
     from app.services.seed import seed_defaults
 
     Base.metadata.create_all(bind=engine)
+    _drop_removed_agent_columns()
     with SessionLocal() as db:
         seed_defaults(db)
+
+
+def _drop_removed_agent_columns() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        for table_name in ("agents", "agent_prompt_versions"):
+            columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+            if "output_schema" in columns:
+                connection.exec_driver_sql(f"ALTER TABLE {table_name} DROP COLUMN output_schema")

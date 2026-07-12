@@ -1,8 +1,9 @@
-import { CheckCircle2, ChevronDown, ChevronRight, Edit3, PlayCircle, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Edit3, PlayCircle, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   clearDataCache,
+  createDataProvider,
   fetchDataFetchLogs,
   fetchDataAlerts,
   fetchDataQuality,
@@ -15,6 +16,7 @@ import {
   runScheduledTask,
   runDataHealthCheck,
   updateDataProvider,
+  updateDataRoute,
   type DataAlertItem,
   type DataFetchLog,
   type DataProvider,
@@ -125,6 +127,10 @@ export function DataSourcesPage() {
   const [message, setMessage] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [showRoutes, setShowRoutes] = useState(false);
+  const [providerDialogOpen, setProviderDialogOpen] = useState(false);
+  const [routeDialog, setRouteDialog] = useState<DataRoute | null>(null);
+  const [newProvider, setNewProvider] = useState({ key: "", name: "", type: "http", base_url: "", test_url: "", auth_type: "none", cache_ttl_seconds: 60 });
+  const [routeChainText, setRouteChainText] = useState("");
   const [credentials, setCredentials] = useState<DataProviderCredential[]>([]);
   const [providerForm, setProviderForm] = useState({
     name: "",
@@ -268,6 +274,32 @@ export function DataSourcesPage() {
     }
   }
 
+  async function createProvider() {
+    try {
+      const created = await createDataProvider(newProvider);
+      setProviderDialogOpen(false);
+      setSelectedKey(created.key);
+      setMessage(`已新增数据源：${created.name}`);
+      await loadData();
+    } catch (err) { setMessage(err instanceof Error ? err.message : "新增数据源失败"); }
+  }
+
+  function openRouteEditor(route: DataRoute) {
+    setRouteDialog(route);
+    setRouteChainText(route.provider_chain.join(","));
+  }
+
+  async function saveRoute() {
+    if (!routeDialog) return;
+    const provider_chain = routeChainText.split(",").map((item) => item.trim()).filter(Boolean);
+    try {
+      await updateDataRoute(routeDialog.id, { provider_chain, enabled: routeDialog.enabled, fallback_policy: routeDialog.fallback_policy });
+      setRouteDialog(null);
+      setMessage("数据路由已保存");
+      await loadData();
+    } catch (err) { setMessage(err instanceof Error ? err.message : "数据路由保存失败"); }
+  }
+
   return (
     <div className="page-grid data-source-layout">
       <div className="main-column">
@@ -286,7 +318,7 @@ export function DataSourcesPage() {
           description="这里是日常主要入口：看数据源是否可用、是否需要密钥、最近是否成功。"
           actions={
             <>
-              <button className="btn btn-secondary" type="button">新增数据源</button>
+              <button className="btn btn-secondary" onClick={() => setProviderDialogOpen(true)} type="button">新增数据源</button>
               <button className="btn btn-primary" disabled={loading} onClick={() => checkProvider()} type="button">
                 <RefreshCw size={14} />
                 全部检查
@@ -393,7 +425,7 @@ export function DataSourcesPage() {
                   <tr key={task.key}>
                     <td>{task.name}</td>
                     <td className="mono">{task.key}</td>
-                    <td className="mono">{formatInterval(task.interval_seconds)}</td>
+                    <td className="mono">{task.schedule || formatInterval(task.interval_seconds)}</td>
                     <td>{task.enabled ? "是" : "否"}</td>
                     <td>
                       {task.last_status ? (
@@ -466,7 +498,7 @@ export function DataSourcesPage() {
           {showRoutes ? (
             <div className="route-grid">
               {routes.map((route) => (
-                <article className="route-card" key={route.id}>
+                <article className="route-card" key={route.id} onClick={() => openRouteEditor(route)}>
                   <div className="route-title">
                     <strong>{route.data_category}</strong>
                     <StatusBadge tone={route.enabled ? "green" : "neutral"}>{route.enabled ? "启用" : "停用"}</StatusBadge>
@@ -618,6 +650,8 @@ export function DataSourcesPage() {
           </div>
         </Panel>
       </aside>
+      {providerDialogOpen ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setProviderDialogOpen(false)}><section className="modal-dialog provider-dialog" aria-modal="true" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="modal-dialog-header"><div><h2>新增数据源</h2><p>创建后可配置密钥、健康检查和路由。</p></div><button className="icon-btn" onClick={() => setProviderDialogOpen(false)} title="关闭" type="button"><X size={16} /></button></div><div className="modal-dialog-body provider-dialog-body"><div className="form-grid two"><label>Provider key<input className="input mono" onChange={(event) => setNewProvider({ ...newProvider, key: event.target.value })} value={newProvider.key} /></label><label>名称<input className="input" onChange={(event) => setNewProvider({ ...newProvider, name: event.target.value })} value={newProvider.name} /></label><label>类型<input className="input" onChange={(event) => setNewProvider({ ...newProvider, type: event.target.value })} value={newProvider.type} /></label><label>认证方式<select className="input" onChange={(event) => setNewProvider({ ...newProvider, auth_type: event.target.value })} value={newProvider.auth_type}><option value="none">none</option><option value="api_key">api_key</option><option value="cookie">cookie</option></select></label></div><label>Base URL<input className="input mono" onChange={(event) => setNewProvider({ ...newProvider, base_url: event.target.value })} value={newProvider.base_url} /></label><label>Test URL<input className="input mono" onChange={(event) => setNewProvider({ ...newProvider, test_url: event.target.value })} value={newProvider.test_url} /></label></div><div className="modal-dialog-footer"><button className="btn btn-secondary" onClick={() => setProviderDialogOpen(false)} type="button">取消</button><button className="btn btn-primary" disabled={!newProvider.key || !newProvider.name} onClick={() => void createProvider()} type="button">创建数据源</button></div></section></div> : null}
+      {routeDialog ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setRouteDialog(null)}><section className="modal-dialog provider-dialog" aria-modal="true" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="modal-dialog-header"><div><h2>编辑数据路由</h2><p>{routeDialog.data_category} · {routeDialog.tool_name}</p></div><button className="icon-btn" onClick={() => setRouteDialog(null)} title="关闭" type="button"><X size={16} /></button></div><div className="modal-dialog-body provider-dialog-body"><label>主备 Provider 链（逗号分隔）<input className="input mono" onChange={(event) => setRouteChainText(event.target.value)} value={routeChainText} /></label><label>回退策略<input className="input" onChange={(event) => setRouteDialog({ ...routeDialog, fallback_policy: event.target.value })} value={routeDialog.fallback_policy} /></label><label className="check-line"><input checked={routeDialog.enabled} onChange={(event) => setRouteDialog({ ...routeDialog, enabled: event.target.checked })} type="checkbox" /><span>启用路由</span></label></div><div className="modal-dialog-footer"><button className="btn btn-secondary" onClick={() => setRouteDialog(null)} type="button">取消</button><button className="btn btn-primary" onClick={() => void saveRoute()} type="button">保存路由</button></div></section></div> : null}
     </div>
   );
 }

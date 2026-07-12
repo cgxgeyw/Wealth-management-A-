@@ -21,8 +21,10 @@ from app.schemas.data_source import (
     DataProviderCredentialUpsertRequest,
     DataProviderRead,
     DataProviderUpdateRequest,
+    DataProviderCreateRequest,
     DataRouteListResponse,
     DataRouteRead,
+    DataRouteUpdateRequest,
     DataSnapshotCreateRequest,
     DataSnapshotListResponse,
     DataSnapshotRead,
@@ -30,6 +32,8 @@ from app.schemas.data_source import (
     HealthCheckResponse,
     KlineResponse,
     NewsResponse,
+    PremarketRecommendationRead,
+    PremarketRecommendationResponse,
     ScheduledTaskListResponse,
     ScheduledTaskRead,
     ScheduledTaskRunListResponse,
@@ -49,8 +53,7 @@ from app.services.data_fetcher import (
     get_realtime_quote,
 )
 from app.services.data_snapshots import create_analysis_snapshot
-from app.services.scheduler import TASKS, last_run_by_task, list_task_runs, run_task_once
-from app.services.technical_indicators import calculate_indicators
+from app.services.scheduler import TASKS, last_run_by_task, list_premarket_recommendations, list_task_runs, run_task_once
 
 router = APIRouter()
 
@@ -121,6 +124,26 @@ def update_provider(
     if payload.rate_limit is not None:
         provider.rate_limit_json = json.dumps(payload.rate_limit, ensure_ascii=False)
 
+    db.add(provider)
+    db.commit()
+    db.refresh(provider)
+    return DataProviderRead.model_validate(provider)
+
+
+@router.post("/providers", response_model=DataProviderRead)
+def create_provider(payload: DataProviderCreateRequest, db: Session = Depends(get_db)) -> DataProviderRead:
+    if db.scalar(select(DataProvider).where(DataProvider.key == payload.key)):
+        raise HTTPException(status_code=409, detail="Provider key already exists.")
+    provider = DataProvider(
+        key=payload.key,
+        name=payload.name,
+        type=payload.type,
+        enabled=payload.enabled,
+        auth_type=payload.auth_type,
+        base_url=payload.base_url,
+        test_url=payload.test_url,
+        cache_ttl_seconds=payload.cache_ttl_seconds,
+    )
     db.add(provider)
     db.commit()
     db.refresh(provider)
@@ -218,6 +241,26 @@ def list_routes(db: Session = Depends(get_db)) -> DataRouteListResponse:
             )
         )
     return DataRouteListResponse(items=items)
+
+
+@router.patch("/routes/{route_id}", response_model=DataRouteRead)
+def update_route(route_id: int, payload: DataRouteUpdateRequest, db: Session = Depends(get_db)) -> DataRouteRead:
+    route = db.get(DataRoute, route_id)
+    if not route:
+        raise HTTPException(status_code=404, detail="Data route not found.")
+    if payload.provider_chain:
+        provider_keys = set(db.scalars(select(DataProvider.key).where(DataProvider.key.in_(payload.provider_chain))).all())
+        if provider_keys != set(payload.provider_chain):
+            raise HTTPException(status_code=400, detail="One or more providers in the route do not exist.")
+        route.provider_chain_json = json.dumps(payload.provider_chain, ensure_ascii=False)
+    if payload.enabled is not None:
+        route.enabled = payload.enabled
+    if payload.fallback_policy is not None:
+        route.fallback_policy = payload.fallback_policy
+    db.add(route)
+    db.commit()
+    db.refresh(route)
+    return DataRouteRead(id=route.id, data_category=route.data_category, tool_name=route.tool_name, provider_chain=json.loads(route.provider_chain_json), enabled=route.enabled, fallback_policy=route.fallback_policy)
 
 
 @router.get("/fetch-logs", response_model=DataFetchLogListResponse)
@@ -373,6 +416,7 @@ def list_scheduled_tasks(db: Session = Depends(get_db)) -> ScheduledTaskListResp
                 key=task.key,
                 name=task.name,
                 interval_seconds=task.interval_seconds,
+                schedule=task.schedule,
                 enabled=task.enabled,
                 last_status=latest.status if latest else None,
                 last_message=latest.message if latest else None,
@@ -398,6 +442,17 @@ def list_scheduled_task_runs(
 ) -> ScheduledTaskRunListResponse:
     return ScheduledTaskRunListResponse(
         items=[ScheduledTaskRunRead.model_validate(run) for run in list_task_runs(db, limit=limit)]
+    )
+
+
+@router.get("/premarket-recommendations", response_model=PremarketRecommendationResponse)
+def get_premarket_recommendations(db: Session = Depends(get_db)) -> PremarketRecommendationResponse:
+    rows = list_premarket_recommendations(db)
+    return PremarketRecommendationResponse(
+        scan_date=rows[0].scan_date if rows else "",
+        generated_at=rows[0].generated_at if rows else None,
+        candidate_count=len(rows),
+        items=[PremarketRecommendationRead.model_validate(row, from_attributes=True) for row in rows],
     )
 
 

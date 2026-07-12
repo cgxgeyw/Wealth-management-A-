@@ -43,6 +43,7 @@ from app.schemas.knowledge import (
 from app.services.embedding_client import EmbeddingError, embed_texts
 from app.services.knowledge_faiss import rebuild_faiss_index
 from app.services.knowledge_faiss import search_faiss
+from app.services.rerank_client import rerank_rows
 
 
 def ensure_knowledge_fts(db: Session) -> None:
@@ -141,6 +142,43 @@ def update_knowledge_base(db: Session, base_id: int, payload: KnowledgeBaseUpdat
     db.commit()
     db.refresh(item)
     return knowledge_base_read(db, item)
+
+
+def delete_knowledge_base(db: Session, base_id: int) -> KnowledgeBaseRead | None:
+    """Delete a user knowledge base and every index artifact it owns."""
+    ensure_knowledge_fts(db)
+    item = db.get(KnowledgeBase, base_id)
+    if not item:
+        return None
+    if item.id == 1:
+        raise ValueError("默认知识库不能删除。")
+    active_import = db.scalar(
+        select(KnowledgeImportTask.id).where(
+            KnowledgeImportTask.knowledge_base_id == base_id,
+            KnowledgeImportTask.status.in_(("queued", "processing")),
+        )
+    )
+    if active_import:
+        raise ValueError("知识库仍有导入任务执行中，完成后再删除。")
+
+    result = knowledge_base_read(db, item)
+    document_ids = list(
+        db.scalars(select(KnowledgeDocument.id).where(KnowledgeDocument.knowledge_base_id == base_id)).all()
+    )
+    if document_ids:
+        db.execute(delete(KnowledgeEmbedding).where(KnowledgeEmbedding.document_id.in_(document_ids)))
+        db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id.in_(document_ids)))
+        placeholders = ", ".join(f":document_{index}" for index in range(len(document_ids)))
+        db.execute(
+            text(f"DELETE FROM knowledge_chunks_fts WHERE document_id IN ({placeholders})"),
+            {f"document_{index}": value for index, value in enumerate(document_ids)},
+        )
+        db.execute(delete(KnowledgeDocument).where(KnowledgeDocument.id.in_(document_ids)))
+    db.execute(delete(KnowledgeImportTask).where(KnowledgeImportTask.knowledge_base_id == base_id))
+    db.delete(item)
+    db.commit()
+    rebuild_faiss_index(db)
+    return result
 
 
 def knowledge_base_read(db: Session, item: KnowledgeBase) -> KnowledgeBaseRead:
@@ -484,10 +522,15 @@ def update_document(
     document = db.get(KnowledgeDocument, document_id)
     if not document:
         return None
+    content_changed = payload.content is not None and payload.content != document.content
     for field in ("title", "doc_type", "source", "published_at"):
         value = getattr(payload, field)
         if value is not None:
             setattr(document, field, value)
+    if content_changed:
+        document.content = payload.content or ""
+        document.summary = _summarize(document.content)
+        document.status = "indexing"
     if payload.symbols is not None:
         document.symbols_json = json.dumps(_normalize_list(payload.symbols), ensure_ascii=False)
     if payload.tags is not None:
@@ -497,8 +540,13 @@ def update_document(
     if payload.enabled is not None:
         document.enabled = payload.enabled
     db.add(document)
+    if content_changed:
+        _replace_chunks(db, document)
+        document.status = "indexed"
     db.commit()
     db.refresh(document)
+    if content_changed:
+        rebuild_faiss_index(db)
     return document_detail(db, document)
 
 
@@ -586,6 +634,7 @@ def search_knowledge(db: Session, payload: KnowledgeSearchRequest) -> KnowledgeS
     rows = _merge_search_rows(_fts_search(db, payload), _vector_search(db, payload))
     if not rows:
         rows = _fallback_search(db, payload)
+    rows = rerank_rows(db, payload.query, rows, payload.top_k)
     items = [_row_to_search_item(row) for row in rows[: payload.top_k]]
     db.add(
         KnowledgeRetrievalLog(

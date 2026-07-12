@@ -19,6 +19,7 @@ class AnalysisTaskRead(BaseModel):
     stage: str
     progress: int
     agent_keys: list[str]
+    workflow: dict = Field(default_factory=dict)
     run_key: str
     snapshot_id: int
     report_path: str
@@ -30,6 +31,24 @@ class AnalysisTaskRead(BaseModel):
 
 class AnalysisTaskListResponse(BaseModel):
     items: list[AnalysisTaskRead]
+
+
+class AnalysisTaskExecutionEventRead(BaseModel):
+    id: int
+    task_key: str
+    run_key: str
+    sequence: int
+    event_type: str
+    agent_key: str
+    agent_name: str
+    tool_key: str
+    status: str
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AnalysisTaskExecutionEventListResponse(BaseModel):
+    items: list[AnalysisTaskExecutionEventRead]
 
 
 class AnalysisTaskTemplateRead(BaseModel):

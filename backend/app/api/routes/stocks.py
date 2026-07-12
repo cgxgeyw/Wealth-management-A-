@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -32,15 +33,24 @@ from app.services.data_fetcher import (
     get_realtime_quote,
     get_research_reports,
 )
-from app.services.stock_catalog import get_stock_profile, search_stocks
+from app.services.stock_catalog import get_stock_profile, search_stocks, sync_stock_catalog
 from app.services.technical_indicators import calculate_indicators
 
 router = APIRouter()
 
 
 @router.get("/search", response_model=StockSearchResponse)
-def search(q: str = "", limit: int = 20) -> StockSearchResponse:
-    return StockSearchResponse(items=search_stocks(q, min(max(limit, 1), 100)))
+def search(q: str = "", limit: int = 20, db: Session = Depends(get_db)) -> StockSearchResponse:
+    return StockSearchResponse(items=search_stocks(db, q, min(max(limit, 1), 100)))
+
+
+@router.post("/catalog/sync")
+def sync_catalog(db: Session = Depends(get_db)) -> dict[str, int | str]:
+    try:
+        count, provider = sync_stock_catalog(db)
+        return {"count": count, "provider": provider}
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Stock catalog provider unavailable: {exc}") from exc
 
 
 @router.get("/{symbol}/profile", response_model=StockProfile)

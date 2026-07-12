@@ -27,7 +27,6 @@ export interface AgentConfig {
   enabled: boolean;
   system_prompt: string;
   task_prompt: string;
-  output_schema: string;
   variables: string[];
   tools: string[];
   current_version: number;
@@ -48,7 +47,6 @@ export interface AgentUpdatePayload {
   enabled?: boolean;
   system_prompt?: string;
   task_prompt?: string;
-  output_schema?: string;
   variables?: string[];
   tools?: string[];
   change_note?: string;
@@ -60,7 +58,6 @@ export interface AgentPromptVersion {
   version: number;
   system_prompt: string;
   task_prompt: string;
-  output_schema: string;
   variables: string[];
   tools: string[];
   change_note: string;
@@ -75,7 +72,6 @@ export interface AgentRenderResponse {
   agent_key: string;
   rendered_system_prompt: string;
   rendered_task_prompt: string;
-  output_schema: string;
   missing_variables: string[];
   tools: string[];
 }
@@ -109,6 +105,68 @@ export interface AgentToolRunResponse {
   status: string;
   output: Record<string, unknown>;
   metadata: Record<string, unknown>;
+}
+
+export interface AgentToolAudit { tool_key: string; total: number; failures: number; last_status: string; last_error: string; last_called_at: string | null; }
+export interface AgentToolAuditListResponse { items: AgentToolAudit[]; }
+
+export interface AgentSkill {
+  id: number;
+  key: string;
+  name: string;
+  description: string;
+  instruction: string;
+  enabled: boolean;
+  agent_keys: string[];
+  usage_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSkillListResponse {
+  items: AgentSkill[];
+}
+
+export interface AgentSkillPayload {
+  key?: string;
+  name?: string;
+  description?: string;
+  instruction?: string;
+  enabled?: boolean;
+  agent_keys?: string[];
+}
+
+export type ModelCapability = "chat" | "embedding" | "rerank";
+
+export interface ModelConfig {
+  id: number;
+  key: string;
+  name: string;
+  capability: ModelCapability;
+  model: string;
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_masked: string;
+  timeout_seconds: number;
+  enabled: boolean;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelConfigListResponse { items: ModelConfig[]; }
+
+export interface ModelConfigPayload {
+  key?: string;
+  name?: string;
+  capability?: ModelCapability;
+  model?: string;
+  base_url?: string;
+  api_key?: string;
+  timeout_seconds?: number;
+  enabled?: boolean;
+  is_default?: boolean;
 }
 
 export interface AgentChatMessage {
@@ -174,7 +232,7 @@ export interface AgentRunListResponse {
 }
 
 export interface AgentRunCreatePayload {
-  symbol: string;
+  symbol?: string;
   query?: string;
   mode?: string;
   agent_keys?: string[];
@@ -194,6 +252,7 @@ export interface AnalysisTask {
   stage: string;
   progress: number;
   agent_keys: string[];
+  workflow: Record<string, unknown>;
   run_key: string;
   snapshot_id: number;
   report_path: string;
@@ -205,6 +264,24 @@ export interface AnalysisTask {
 
 export interface AnalysisTaskListResponse {
   items: AnalysisTask[];
+}
+
+export interface AnalysisTaskExecutionEvent {
+  id: number;
+  task_key: string;
+  run_key: string;
+  sequence: number;
+  event_type: string;
+  agent_key: string;
+  agent_name: string;
+  tool_key: string;
+  status: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AnalysisTaskExecutionEventListResponse {
+  items: AnalysisTaskExecutionEvent[];
 }
 
 export interface AnalysisTaskTemplate {
@@ -326,6 +403,18 @@ export interface KnowledgeDocumentCreatePayload {
   separators?: string[];
 }
 
+export interface KnowledgeDocumentUpdatePayload {
+  title?: string;
+  content?: string;
+  doc_type?: string;
+  source?: string;
+  symbols?: string[];
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  published_at?: string;
+  enabled?: boolean;
+}
+
 export interface KnowledgeUploadOptions {
   knowledge_base_id?: number;
   chunking_strategy?: string;
@@ -434,6 +523,12 @@ export interface DataProviderUpdatePayload {
   rate_limit?: Record<string, unknown>;
 }
 
+export interface DataProviderCreatePayload extends DataProviderUpdatePayload {
+  key: string;
+  name: string;
+  type?: string;
+}
+
 export interface DataProviderCredential {
   provider_key: string;
   credential_type: string;
@@ -458,6 +553,12 @@ export interface DataRoute {
 
 export interface DataRouteListResponse {
   items: DataRoute[];
+}
+
+export interface DataRouteUpdatePayload {
+  provider_chain: string[];
+  enabled?: boolean;
+  fallback_policy?: string;
 }
 
 export interface DataFetchLog {
@@ -510,6 +611,17 @@ export interface RealtimeQuote {
   market_cap: number | null;
   timestamp: string;
   provider_key: string;
+}
+
+export interface StockSearchItem {
+  symbol: string;
+  name: string;
+  exchange: string;
+  pinyin: string;
+}
+
+export interface StockSearchResponse {
+  items: StockSearchItem[];
 }
 
 export interface KlineBar {
@@ -792,6 +904,7 @@ export interface ScheduledTask {
   key: string;
   name: string;
   interval_seconds: number;
+  schedule: string;
   enabled: boolean;
   last_status: string | null;
   last_message: string | null;
@@ -817,10 +930,30 @@ export interface ScheduledTaskRunListResponse {
   items: ScheduledTaskRun[];
 }
 
+export interface PremarketRecommendation {
+  symbol: string;
+  name: string;
+  rank: number;
+  score: number;
+  reason: string;
+}
+
+export interface PremarketRecommendationResponse {
+  scan_date: string;
+  generated_at: string | null;
+  source: string;
+  source_label: string;
+  candidate_count: number;
+  items: PremarketRecommendation[];
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`请求失败：${response.status}`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return response.json() as Promise<T>;
 }
@@ -858,6 +991,9 @@ async function deleteJson<T>(url: string): Promise<T> {
   if (!response.ok) {
     throw new Error(`请求失败：${response.status}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return response.json() as Promise<T>;
 }
 
@@ -885,6 +1021,10 @@ export function rollbackAgent(agentKey: string, version: number): Promise<AgentC
   return postJson<AgentConfig>(`/api/agents/${encodeURIComponent(agentKey)}/rollback`, { version });
 }
 
+export function deleteAgentVersion(agentKey: string, version: number): Promise<AgentPromptVersion> {
+  return deleteJson<AgentPromptVersion>(`/api/agents/${encodeURIComponent(agentKey)}/versions/${version}`);
+}
+
 export function renderAgentPrompt(
   agentKey: string,
   variables: Record<string, string>
@@ -907,6 +1047,8 @@ export function fetchAgentTools(): Promise<AgentToolListResponse> {
   return getJson<AgentToolListResponse>("/api/agent-tools");
 }
 
+export function fetchAgentToolAudit(): Promise<AgentToolAuditListResponse> { return getJson<AgentToolAuditListResponse>("/api/agent-tools/audit"); }
+
 export function runAgentTool(
   agentKey: string,
   toolKey: string,
@@ -917,6 +1059,30 @@ export function runAgentTool(
     { params }
   );
 }
+
+export function fetchAgentSkills(): Promise<AgentSkillListResponse> {
+  return getJson<AgentSkillListResponse>("/api/agent-skills");
+}
+
+export function createAgentSkill(payload: Required<Pick<AgentSkillPayload, "key" | "name">> & AgentSkillPayload): Promise<AgentSkill> {
+  return postJson<AgentSkill>("/api/agent-skills", payload);
+}
+
+export function updateAgentSkill(skillKey: string, payload: AgentSkillPayload): Promise<AgentSkill> {
+  return patchJson<AgentSkill>(`/api/agent-skills/${encodeURIComponent(skillKey)}`, payload);
+}
+
+export async function deleteAgentSkill(skillKey: string): Promise<void> {
+  const response = await fetch(`/api/agent-skills/${encodeURIComponent(skillKey)}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+}
+
+export function fetchModelConfigs(): Promise<ModelConfigListResponse> { return getJson<ModelConfigListResponse>("/api/model-configs"); }
+export function createModelConfig(payload: Required<Pick<ModelConfigPayload, "key" | "name" | "capability" | "model" | "base_url">> & ModelConfigPayload): Promise<ModelConfig> { return postJson<ModelConfig>("/api/model-configs", payload); }
+export function updateModelConfig(key: string, payload: ModelConfigPayload): Promise<ModelConfig> { return patchJson<ModelConfig>(`/api/model-configs/${encodeURIComponent(key)}`, payload); }
+export async function deleteModelConfig(key: string): Promise<void> { const response = await fetch(`/api/model-configs/${encodeURIComponent(key)}`, { method: "DELETE" }); if (!response.ok) throw new Error(`请求失败：${response.status}`); }
 
 export function sendAgentChat(
   agentKey: string,
@@ -951,6 +1117,14 @@ export function fetchAnalysisTasks(limit = 30): Promise<AnalysisTaskListResponse
   return getJson<AnalysisTaskListResponse>(`/api/analysis-tasks?limit=${limit}`);
 }
 
+export function deleteAnalysisTask(taskKey: string): Promise<void> {
+  return deleteJson<void>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}`);
+}
+
+export function clearFinishedAnalysisTasks(): Promise<{ deleted_count: number }> {
+  return deleteJson<{ deleted_count: number }>("/api/analysis-tasks");
+}
+
 export function fetchAnalysisTaskTemplates(): Promise<AnalysisTaskTemplateListResponse> {
   return getJson<AnalysisTaskTemplateListResponse>("/api/analysis-tasks/templates");
 }
@@ -970,12 +1144,20 @@ export function fetchAnalysisTask(taskKey: string): Promise<AnalysisTask> {
   return getJson<AnalysisTask>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}`);
 }
 
+export function fetchAnalysisTaskExecution(taskKey: string): Promise<AnalysisTaskExecutionEventListResponse> {
+  return getJson<AnalysisTaskExecutionEventListResponse>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}/execution`);
+}
+
 export function analysisTaskEventsUrl(taskKey: string): string {
   return `/api/analysis-tasks/${encodeURIComponent(taskKey)}/events`;
 }
 
 export function fetchAnalysisTaskReport(taskKey: string): Promise<AnalysisTaskReportResponse> {
   return getJson<AnalysisTaskReportResponse>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}/report`);
+}
+
+export function generateAnalysisTaskReport(taskKey: string): Promise<AnalysisTask> {
+  return postJson<AnalysisTask>(`/api/analysis-tasks/${encodeURIComponent(taskKey)}/report/generate`, {});
 }
 
 export function analysisTaskReportDownloadUrl(taskKey: string): string {
@@ -992,6 +1174,10 @@ export function createKnowledgeBase(payload: KnowledgeBaseCreatePayload): Promis
 
 export function updateKnowledgeBase(baseId: number, payload: KnowledgeBaseUpdatePayload): Promise<KnowledgeBase> {
   return patchJson<KnowledgeBase>(`/api/knowledge/bases/${baseId}`, payload);
+}
+
+export function deleteKnowledgeBase(baseId: number): Promise<KnowledgeBase> {
+  return deleteJson<KnowledgeBase>(`/api/knowledge/bases/${baseId}`);
 }
 
 export function fetchKnowledgeDocuments(
@@ -1023,6 +1209,13 @@ export function fetchKnowledgeDocument(documentId: number): Promise<KnowledgeDoc
 
 export function createKnowledgeDocument(payload: KnowledgeDocumentCreatePayload): Promise<KnowledgeDocumentDetail> {
   return postJson<KnowledgeDocumentDetail>("/api/knowledge/documents", payload);
+}
+
+export function updateKnowledgeDocument(
+  documentId: number,
+  payload: KnowledgeDocumentUpdatePayload
+): Promise<KnowledgeDocumentDetail> {
+  return patchJson<KnowledgeDocumentDetail>(`/api/knowledge/documents/${documentId}`, payload);
 }
 
 export async function uploadKnowledgeDocument(
@@ -1147,6 +1340,10 @@ export function updateDataProvider(
   return patchJson<DataProvider>(`/api/data/providers/${encodeURIComponent(providerKey)}`, payload);
 }
 
+export function createDataProvider(payload: DataProviderCreatePayload): Promise<DataProvider> {
+  return postJson<DataProvider>("/api/data/providers", payload);
+}
+
 export function fetchProviderCredentials(
   providerKey: string
 ): Promise<DataProviderCredentialListResponse> {
@@ -1170,6 +1367,10 @@ export function fetchDataRoutes(): Promise<DataRouteListResponse> {
   return getJson<DataRouteListResponse>("/api/data/routes");
 }
 
+export function updateDataRoute(routeId: number, payload: DataRouteUpdatePayload): Promise<DataRoute> {
+  return patchJson<DataRoute>(`/api/data/routes/${routeId}`, payload);
+}
+
 export function fetchDataFetchLogs(): Promise<DataFetchLogListResponse> {
   return getJson<DataFetchLogListResponse>("/api/data/fetch-logs");
 }
@@ -1182,6 +1383,20 @@ export function runDataHealthCheck(providerKey?: string): Promise<HealthCheckRes
 
 export function fetchRealtimeQuote(symbol: string): Promise<RealtimeQuote> {
   return getJson<RealtimeQuote>(`/api/data/quote/${encodeURIComponent(symbol)}`);
+}
+
+export function searchStocks(query: string, limit = 10): Promise<StockSearchResponse> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return getJson<StockSearchResponse>(`/api/stocks/search?${params}`);
+}
+
+export interface StockCatalogSyncResponse {
+  count: number;
+  provider: string;
+}
+
+export function syncStockCatalog(): Promise<StockCatalogSyncResponse> {
+  return postJson<StockCatalogSyncResponse>("/api/stocks/catalog/sync", {});
 }
 
 export function fetchKlines(
@@ -1264,8 +1479,8 @@ export function fetchWatchlist(): Promise<WatchlistListResponse> {
   return getJson<WatchlistListResponse>("/api/data/watchlist");
 }
 
-export function addWatchlistItem(symbol: string): Promise<WatchlistItem> {
-  return postJson<WatchlistItem>("/api/data/watchlist", { symbol });
+export function addWatchlistItem(symbol: string, name?: string): Promise<WatchlistItem> {
+  return postJson<WatchlistItem>("/api/data/watchlist", { symbol, name });
 }
 
 export async function deleteWatchlistItem(symbol: string): Promise<WatchlistListResponse> {
@@ -1319,4 +1534,8 @@ export function runScheduledTask(taskKey: string): Promise<ScheduledTaskRun> {
 
 export function fetchScheduledTaskRuns(limit = 20): Promise<ScheduledTaskRunListResponse> {
   return getJson<ScheduledTaskRunListResponse>(`/api/data/scheduled-task-runs?limit=${limit}`);
+}
+
+export function fetchPremarketRecommendations(): Promise<PremarketRecommendationResponse> {
+  return getJson<PremarketRecommendationResponse>("/api/data/premarket-recommendations");
 }

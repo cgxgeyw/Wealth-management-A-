@@ -19,6 +19,14 @@ docs/      设计文档
 
 ## 启动后端
 
+Windows PowerShell 可直接从仓库根目录运行：
+
+```powershell
+.\start-backend.ps1
+```
+
+默认启用热重载；使用 `.\start-backend.ps1 -NoReload` 可关闭，使用 `-Port 8010` 可指定端口。
+
 ```bash
 cd backend
 python -m venv .venv
@@ -55,4 +63,3 @@ http://127.0.0.1:5173
 - 数据路由列表：`GET /api/data/routes`
 - 采集日志：`GET /api/data/fetch-logs`
 - 数据源健康检查：`POST /api/data/health-check`
-

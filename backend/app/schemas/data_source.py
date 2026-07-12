@@ -63,6 +63,23 @@ class DataProviderUpdateRequest(BaseModel):
     rate_limit: dict[str, Any] | None = None
 
 
+class DataProviderCreateRequest(BaseModel):
+    key: str = Field(min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9_.-]*$")
+    name: str = Field(min_length=1, max_length=120)
+    type: str = "http"
+    enabled: bool = True
+    auth_type: str = "none"
+    base_url: str = ""
+    test_url: str = ""
+    cache_ttl_seconds: int = Field(default=60, ge=0, le=86400)
+
+
+class DataRouteUpdateRequest(BaseModel):
+    provider_chain: list[str] = Field(default_factory=list)
+    enabled: bool | None = None
+    fallback_policy: str | None = None
+
+
 class DataProviderCredentialRead(BaseModel):
     provider_key: str
     credential_type: str
@@ -453,6 +470,7 @@ class ScheduledTaskRead(BaseModel):
     key: str
     name: str
     interval_seconds: int
+    schedule: str = ""
     enabled: bool
     last_status: str | None = None
     last_message: str | None = None
@@ -478,3 +496,20 @@ class ScheduledTaskRunRead(BaseModel):
 
 class ScheduledTaskRunListResponse(BaseModel):
     items: list[ScheduledTaskRunRead]
+
+
+class PremarketRecommendationRead(BaseModel):
+    symbol: str
+    name: str
+    rank: int
+    score: float
+    reason: str
+
+
+class PremarketRecommendationResponse(BaseModel):
+    scan_date: str = ""
+    generated_at: datetime | None = None
+    source: str = "watchlist_premarket_scan"
+    source_label: str = "当前自选股候选池"
+    candidate_count: int = 0
+    items: list[PremarketRecommendationRead]

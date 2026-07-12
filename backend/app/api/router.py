@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     agent_runs,
     agent_chat,
+    agent_skills,
     agent_tools,
     agents,
     analysis_tasks,
@@ -10,6 +11,7 @@ from app.api.routes import (
     health,
     knowledge,
     market,
+    model_configs,
     modules,
     sectors,
     stocks,
@@ -23,6 +25,8 @@ api_router.include_router(agent_chat.router, prefix="/agent-chat", tags=["agent 
 api_router.include_router(agent_runs.router, prefix="/agent-runs", tags=["agent runs"])
 api_router.include_router(analysis_tasks.router, prefix="/analysis-tasks", tags=["analysis tasks"])
 api_router.include_router(agent_tools.router, prefix="/agent-tools", tags=["agent tools"])
+api_router.include_router(agent_skills.router, prefix="/agent-skills", tags=["agent skills"])
+api_router.include_router(model_configs.router, prefix="/model-configs", tags=["model configs"])
 api_router.include_router(data_sources.router, prefix="/data", tags=["data sources"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
 api_router.include_router(stocks.router, prefix="/stocks", tags=["stocks"])

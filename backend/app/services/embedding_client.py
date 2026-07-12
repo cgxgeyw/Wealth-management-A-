@@ -4,7 +4,8 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
+from app.db.session import SessionLocal
+from app.services.model_runtime import get_model_runtime
 
 
 class EmbeddingError(RuntimeError):
@@ -14,16 +15,18 @@ class EmbeddingError(RuntimeError):
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    endpoint = _embedding_endpoint(settings.embedding_base_url)
+    with SessionLocal() as db:
+        runtime = get_model_runtime(db, "embedding")
+    endpoint = _embedding_endpoint(runtime.base_url)
     headers = {"Content-Type": "application/json"}
-    if settings.embedding_api_key:
-        headers["Authorization"] = f"Bearer {settings.embedding_api_key}"
+    if runtime.api_key:
+        headers["Authorization"] = f"Bearer {runtime.api_key}"
     try:
-        with httpx.Client(timeout=settings.embedding_timeout_seconds) as client:
+        with httpx.Client(timeout=runtime.timeout_seconds) as client:
             response = client.post(
                 endpoint,
                 headers=headers,
-                json={"model": settings.embedding_model, "input": texts},
+                json={"model": runtime.model, "input": texts},
             )
             response.raise_for_status()
             data = response.json()

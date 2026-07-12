@@ -18,6 +18,7 @@ class AnalysisTask(Base):
     stage: Mapped[str] = mapped_column(String(80), default="pending")
     progress: Mapped[int] = mapped_column(Integer, default=0)
     agent_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    workflow_json: Mapped[str] = mapped_column(Text, default="{}")
     run_key: Mapped[str] = mapped_column(String(80), default="", index=True)
     snapshot_id: Mapped[int] = mapped_column(Integer, default=0, index=True)
     report_path: Mapped[str] = mapped_column(Text, default="")
@@ -27,6 +28,22 @@ class AnalysisTask(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class AnalysisTaskExecutionEvent(Base):
+    __tablename__ = "analysis_task_execution_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    task_key: Mapped[str] = mapped_column(String(80), index=True)
+    run_key: Mapped[str] = mapped_column(String(80), default="", index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    agent_key: Mapped[str] = mapped_column(String(80), default="")
+    agent_name: Mapped[str] = mapped_column(String(120), default="")
+    tool_key: Mapped[str] = mapped_column(String(120), default="")
+    status: Mapped[str] = mapped_column(String(40), default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AnalysisTaskTemplateOverride(Base):

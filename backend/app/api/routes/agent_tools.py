@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.agent import AgentConfig
-from app.schemas.agent_tool import AgentToolListResponse, AgentToolRunRequest, AgentToolRunResponse, AgentToolSpec
+from app.models.agent_audit import AgentToolCallAudit
+from app.schemas.agent_tool import AgentToolAuditListResponse, AgentToolAuditRead, AgentToolListResponse, AgentToolRunRequest, AgentToolRunResponse, AgentToolSpec
 from app.services.agent_tools import AgentToolError, execute_tool, list_tool_specs
 
 router = APIRouter()
@@ -37,6 +38,18 @@ def list_agent_tools() -> AgentToolListResponse:
     return AgentToolListResponse(items=[_tool_spec_read(spec) for spec in list_tool_specs()])
 
 
+@router.get("/audit", response_model=AgentToolAuditListResponse)
+def tool_audit(db: Session = Depends(get_db)) -> AgentToolAuditListResponse:
+    audits = db.scalars(select(AgentToolCallAudit).order_by(AgentToolCallAudit.id.desc()).limit(1000)).all()
+    grouped: dict[str, list[AgentToolCallAudit]] = {}
+    for audit in audits:
+        grouped.setdefault(audit.tool_key, []).append(audit)
+    return AgentToolAuditListResponse(items=[
+        AgentToolAuditRead(tool_key=key, total=len(rows), failures=sum(item.status != "success" for item in rows), last_status=rows[0].status, last_error=rows[0].error, last_called_at=rows[0].created_at)
+        for key, rows in grouped.items()
+    ])
+
+
 @router.post("/{agent_key}/{tool_key:path}/run", response_model=AgentToolRunResponse)
 def run_agent_tool(
     agent_key: str,
@@ -53,7 +66,18 @@ def run_agent_tool(
     try:
         output = execute_tool(db, tool_key, payload.params)
     except AgentToolError as exc:
+        db.add(
+            AgentToolCallAudit(
+                agent_key=agent.key,
+                tool_key=tool_key,
+                status="failed",
+                error=str(exc),
+            )
+        )
+        db.commit()
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    db.add(AgentToolCallAudit(agent_key=agent.key, tool_key=tool_key, status="success"))
+    db.commit()
     return AgentToolRunResponse(
         agent_key=agent.key,
         tool_key=tool_key,

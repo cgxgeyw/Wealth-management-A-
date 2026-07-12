@@ -23,6 +23,7 @@ class KnowledgeDocumentCreateRequest(BaseModel):
 
 class KnowledgeDocumentUpdateRequest(BaseModel):
     title: str | None = None
+    content: str | None = Field(default=None, min_length=1)
     doc_type: str | None = None
     source: str | None = None
     symbols: list[str] | None = None

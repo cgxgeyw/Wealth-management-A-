@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, get_db
 from app.schemas.analysis_task import (
     AnalysisTaskCreateRequest,
+    AnalysisTaskExecutionEventListResponse,
     AnalysisTaskListResponse,
     AnalysisTaskRead,
     AnalysisTaskReportResponse,
@@ -18,9 +19,13 @@ from app.schemas.analysis_task import (
 )
 from app.services.analysis_tasks import (
     apply_task_template_defaults,
+    clear_finished_analysis_tasks,
     create_analysis_task,
+    delete_analysis_task,
+    generate_analysis_task_report,
     get_analysis_task,
     get_analysis_task_model,
+    list_execution_events,
     list_analysis_tasks,
     read_task_report,
     run_analysis_task,
@@ -40,6 +45,8 @@ def create_task(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> AnalysisTaskRead:
+    if not payload.query.strip():
+        raise HTTPException(status_code=400, detail="Analysis requirement is required.")
     payload = apply_task_template_defaults(db, payload)
     task = create_analysis_task(db, payload)
     background_tasks.add_task(run_analysis_task, task.task_key, payload.model_dump(mode="json"))
@@ -49,6 +56,11 @@ def create_task(
 @router.get("", response_model=AnalysisTaskListResponse)
 def list_tasks(limit: int = 30, db: Session = Depends(get_db)) -> AnalysisTaskListResponse:
     return AnalysisTaskListResponse(items=list_analysis_tasks(db, limit=limit))
+
+
+@router.delete("")
+def clear_finished_tasks(db: Session = Depends(get_db)) -> dict[str, int]:
+    return {"deleted_count": clear_finished_analysis_tasks(db)}
 
 
 @router.get("/templates", response_model=AnalysisTaskTemplateListResponse)
@@ -90,6 +102,23 @@ def get_task(task_key: str, db: Session = Depends(get_db)) -> AnalysisTaskRead:
     return task
 
 
+@router.delete("/{task_key}", status_code=204)
+def delete_task(task_key: str, db: Session = Depends(get_db)) -> None:
+    try:
+        deleted = delete_analysis_task(db, task_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Analysis task not found.")
+
+
+@router.get("/{task_key}/execution", response_model=AnalysisTaskExecutionEventListResponse)
+def get_task_execution(task_key: str, db: Session = Depends(get_db)) -> AnalysisTaskExecutionEventListResponse:
+    if not get_analysis_task(db, task_key):
+        raise HTTPException(status_code=404, detail="Analysis task not found.")
+    return AnalysisTaskExecutionEventListResponse(items=list_execution_events(db, task_key))
+
+
 @router.get("/{task_key}/events")
 async def stream_task_events(task_key: str, db: Session = Depends(get_db)) -> StreamingResponse:
     if not get_analysis_task(db, task_key):
@@ -125,6 +154,17 @@ def get_task_report(task_key: str, db: Session = Depends(get_db)) -> AnalysisTas
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return AnalysisTaskReportResponse(task_key=task.task_key, report_path=task.report_path, content=content)
+
+
+@router.post("/{task_key}/report/generate", response_model=AnalysisTaskRead)
+def generate_task_report(task_key: str, db: Session = Depends(get_db)) -> AnalysisTaskRead:
+    try:
+        task = generate_analysis_task_report(db, task_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not task:
+        raise HTTPException(status_code=404, detail="Analysis task not found.")
+    return task
 
 
 @router.get("/{task_key}/report/download")

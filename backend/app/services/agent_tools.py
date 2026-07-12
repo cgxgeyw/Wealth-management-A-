@@ -32,6 +32,7 @@ from app.services.data_fetcher import (
 from app.services.knowledge_base import search_knowledge
 from app.services.stock_catalog import get_stock_profile
 from app.services.technical_indicators import calculate_indicators
+from app.services.web_search import WebSearchError, search_web
 
 
 class AgentToolError(RuntimeError):
@@ -56,6 +57,26 @@ ToolHandler = Callable[[Session, dict[str, Any]], dict[str, Any]]
 
 def _text_schema(description: str) -> dict[str, str]:
     return {"type": "string", "description": description}
+
+
+def _stock_schema(*, properties: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Shared function contract for tools whose handler requires a stock symbol."""
+    return {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+            "symbol": _text_schema("A 股股票代码，如 300750"),
+            **(properties or {}),
+        },
+    }
+
+
+_LIMIT_SCHEMA = {"type": "integer", "minimum": 1, "maximum": 100, "description": "返回条数"}
+_PERIOD_SCHEMA = {
+    "type": "string",
+    "enum": ["5m", "30m", "60m", "daily", "weekly", "monthly"],
+    "description": "K 线周期，默认 daily",
+}
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {
@@ -93,7 +114,14 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="技术指标",
         description="基于 K 线计算 MA、MACD、KDJ、RSI、BOLL 等技术指标。",
         category="market",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(
+            properties={
+                "period": _PERIOD_SCHEMA,
+                "adjust": {"type": "string", "enum": ["qfq", "hfq", ""], "description": "复权方式，默认 qfq"},
+                "limit": {**_LIMIT_SCHEMA, "maximum": 800},
+                "names": {"type": "array", "items": {"type": "string", "enum": ["ma", "macd", "rsi", "kdj", "boll"]}, "description": "所需指标，默认全部"},
+            }
+        ),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -102,7 +130,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="个股新闻",
         description="读取市场快讯并按股票代码、股票名称和关联股票过滤。",
         category="news",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": _LIMIT_SCHEMA}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -111,7 +139,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="公司公告",
         description="读取公司公告，复用现有公告数据源路由。",
         category="news",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": _LIMIT_SCHEMA}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -120,7 +148,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="研报检索",
         description="读取券商研报列表，复用现有研报数据源路由。",
         category="news",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": {**_LIMIT_SCHEMA, "maximum": 50}}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -129,7 +157,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="基本面快照",
         description="读取估值、盈利、成长等基本面快照，复用现有基本面数据源路由。",
         category="fundamental",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -138,7 +166,12 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="财务报表",
         description="读取利润表、资产负债表、现金流等财务报表。",
         category="fundamental",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(
+            properties={
+                "statement_type": {"type": "string", "enum": ["income", "balance", "cashflow"], "description": "报表类型，默认 income"},
+                "limit": {**_LIMIT_SCHEMA, "maximum": 20},
+            }
+        ),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -147,7 +180,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="资金流",
         description="读取主力资金流向，复用现有资金流数据源路由。",
         category="capital",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": {**_LIMIT_SCHEMA, "maximum": 120}}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -156,7 +189,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="北向资金",
         description="读取北向资金数据，复用现有市场级数据源路由。",
         category="capital",
-        input_schema={"type": "object"},
+        input_schema={"type": "object", "properties": {"limit": _LIMIT_SCHEMA}},
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -165,7 +198,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="龙虎榜",
         description="读取龙虎榜交易行为，复用现有交易行为数据源路由。",
         category="capital",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": {**_LIMIT_SCHEMA, "maximum": 50}}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -174,7 +207,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="融资融券",
         description="读取融资融券余额与变动，复用现有两融数据源路由。",
         category="capital",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": {**_LIMIT_SCHEMA, "maximum": 50}}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -183,7 +216,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="限售解禁",
         description="读取限售解禁风险，复用现有风险数据源路由。",
         category="risk",
-        input_schema={"type": "object"},
+        input_schema=_stock_schema(properties={"limit": {**_LIMIT_SCHEMA, "maximum": 50}}),
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -192,7 +225,10 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="数据质量",
         description="读取数据源质量评分、失败次数、缓存命中和最近错误信息。",
         category="risk",
-        input_schema={"type": "object"},
+        input_schema={
+            "type": "object",
+            "properties": {"log_limit": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "检查的最近执行日志条数"}},
+        },
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -201,7 +237,13 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="板块概览",
         description="读取行业或概念板块快照，复用现有板块数据源路由。",
         category="macro",
-        input_schema={"type": "object"},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "sector_type": {"type": "string", "enum": ["industry", "concept"], "description": "板块类型，默认 industry"},
+                "limit": _LIMIT_SCHEMA,
+            },
+        },
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -210,7 +252,52 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         name="宏观指标",
         description="读取 CPI、PMI 等宏观指标，复用现有宏观数据源路由。",
         category="macro",
-        input_schema={"type": "object"},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "indicator": {"type": "string", "enum": ["cpi", "pmi"], "description": "宏观指标，默认 cpi"},
+                "limit": {**_LIMIT_SCHEMA, "maximum": 120},
+            },
+        },
+        output_schema={"type": "object"},
+        enabled=True,
+    ),
+    "finance.search": ToolSpec(
+        key="finance.search",
+        name="财经联网搜索",
+        description="搜索最新财经新闻、公司介绍、政策和行业资料，并按来源权威性分级。",
+        category="search",
+        input_schema={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": _text_schema("财经搜索问题或关键词"),
+                "symbol": _text_schema("可选股票代码，用于限定公司语境"),
+                "recency_days": {"type": "integer", "minimum": 1, "maximum": 3650},
+                "domains": {"type": "array", "items": {"type": "string"}},
+                "limit": {**_LIMIT_SCHEMA, "maximum": 20},
+                "language": _text_schema("结果语言，默认 zh-CN"),
+            },
+        },
+        output_schema={"type": "object"},
+        enabled=True,
+    ),
+    "web.search": ToolSpec(
+        key="web.search",
+        name="通用联网搜索",
+        description="搜索常规互联网网页，支持时间范围、语言和域名过滤。",
+        category="search",
+        input_schema={
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": _text_schema("搜索问题或关键词"),
+                "recency_days": {"type": "integer", "minimum": 1, "maximum": 3650},
+                "domains": {"type": "array", "items": {"type": "string"}},
+                "limit": {**_LIMIT_SCHEMA, "maximum": 20},
+                "language": _text_schema("结果语言，默认 zh-CN"),
+            },
+        },
         output_schema={"type": "object"},
         enabled=True,
     ),
@@ -226,6 +313,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
                 "title": _text_schema("文档标题"),
                 "topic": _text_schema("研究主题或股票代码"),
                 "summary": _text_schema("核心摘要"),
+                "content": _text_schema("已经完成的 Markdown 正文；提供后将原样保存，不再由工具代写章节"),
                 "sections": {
                     "type": "array",
                     "description": "章节列表。每项可包含 heading 与 bullets。",
@@ -555,6 +643,20 @@ def _macro_indicator_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]
     return _model_to_dict(data)
 
 
+def _finance_search_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return search_web(db, params, finance=True)
+    except WebSearchError as exc:
+        raise AgentToolError(str(exc), 502) from exc
+
+
+def _web_search_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return search_web(db, params, finance=False)
+    except WebSearchError as exc:
+        raise AgentToolError(str(exc), 502) from exc
+
+
 def _knowledge_search_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
     query = _require_text(params, "query")
     payload = KnowledgeSearchRequest(
@@ -574,7 +676,21 @@ def _write_document(_: Session, params: dict[str, Any]) -> dict[str, Any]:
     summary = str(params.get("summary", "")).strip()
     sections = params.get("sections") if isinstance(params.get("sections"), list) else []
     references = _string_list(params.get("references"))
+    supplied_content = str(params.get("content", "")).strip()
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
+
+    if supplied_content:
+        content = supplied_content.rstrip() + "\n"
+        output_dir = Path("data") / "generated_reports"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_path = output_dir / f"{now.strftime('%Y%m%d-%H%M%S')}-{_safe_filename(title)}.md"
+        file_path.write_text(content, encoding="utf-8")
+        return {
+            "title": title,
+            "path": str(file_path.resolve()),
+            "content": content,
+            "bytes": file_path.stat().st_size,
+        }
 
     lines = [
         f"# {title}",
@@ -636,6 +752,8 @@ _HANDLERS: dict[str, ToolHandler] = {
     "data.quality": _data_quality_tool,
     "sector.snapshots": _sector_snapshots_tool,
     "market.macro": _macro_indicator_tool,
+    "finance.search": _finance_search_tool,
+    "web.search": _web_search_tool,
     "knowledge.search": _knowledge_search_tool,
     "document.write": _write_document,
 }

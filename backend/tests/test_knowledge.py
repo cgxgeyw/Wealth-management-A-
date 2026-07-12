@@ -145,6 +145,12 @@ def test_knowledge_bases_upload_chunking_and_edit_chunks(monkeypatch) -> None:
         assert "编辑后的分块正文" in chunk["content"]
         assert chunk["tags"] == ["储能", "新能源车"]
 
+        removed_base = client.delete(f"/api/knowledge/bases/{base['id']}")
+        assert removed_base.status_code == 200
+        assert removed_base.json()["id"] == base["id"]
+        assert client.get(f"/api/knowledge/documents?knowledge_base_id={base['id']}").json()["items"] == []
+        assert all(item["id"] != base["id"] for item in client.get("/api/knowledge/bases").json()["items"])
+
 
 def test_knowledge_upload_failure_records_import_task(monkeypatch) -> None:
     monkeypatch.setattr("app.services.knowledge_base.embed_texts", lambda texts: [[1.0, 0.0] for _ in texts])
@@ -266,6 +272,20 @@ def test_knowledge_base_update_and_document_rechunk(monkeypatch) -> None:
         assert payload["chunk_size"] == 100
         assert payload["chunk_overlap"] == 5
         assert payload["chunk_count"] >= original_chunk_count
+
+        edited = client.patch(
+            f"/api/knowledge/documents/{document['id']}",
+            json={
+                "title": "已编辑的公司公告摘要",
+                "content": "编辑后的公告正文。" * 40,
+                "tags": ["公告", "编辑"],
+            },
+        )
+        assert edited.status_code == 200
+        edited_payload = edited.json()
+        assert edited_payload["title"] == "已编辑的公司公告摘要"
+        assert edited_payload["tags"] == ["公告", "编辑"]
+        assert all("编辑后的公告正文" in chunk["content"] for chunk in edited_payload["chunks"])
 
 
 def test_knowledge_vector_search_uses_embedding_path(monkeypatch) -> None:

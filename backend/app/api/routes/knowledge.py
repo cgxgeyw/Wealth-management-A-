@@ -27,6 +27,7 @@ from app.services.knowledge_base import (
     create_document,
     create_document_from_file,
     create_import_task,
+    delete_knowledge_base,
     delete_document,
     get_document,
     get_import_task,
@@ -67,6 +68,17 @@ def patch_base(
     db: Session = Depends(get_db),
 ) -> KnowledgeBaseRead:
     result = update_knowledge_base(db, base_id, payload)
+    if not result:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+    return result
+
+
+@router.delete("/bases/{base_id}", response_model=KnowledgeBaseRead)
+def remove_base(base_id: int, db: Session = Depends(get_db)) -> KnowledgeBaseRead:
+    try:
+        result = delete_knowledge_base(db, base_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not result:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
     return result

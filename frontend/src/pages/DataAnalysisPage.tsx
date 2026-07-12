@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowUp, GripVertical, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, GripVertical, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -9,12 +9,17 @@ import {
   fetchDragonTiger,
   fetchFinancialStatements,
   fetchAnalysisTask,
+  fetchAnalysisTaskExecution,
+  fetchAnalysisTaskReport,
+  fetchAgentRun,
+  generateAnalysisTaskReport,
   fetchKlines,
   fetchLockupExpiry,
   fetchMacroIndicator,
   fetchMarginTrading,
   fetchMarketNews,
   fetchNorthboundFlow,
+  fetchPremarketRecommendations,
   fetchRealtimeQuote,
   fetchResearchReports,
   fetchSectorSnapshots,
@@ -24,7 +29,13 @@ import {
   fetchStockIndicators,
   fetchWatchlist,
   reorderWatchlist,
+  searchStocks,
+  syncStockCatalog,
+  type StockSearchItem,
   type AnalysisTask,
+  type AnalysisTaskExecutionEvent,
+  type AnalysisTaskReportResponse,
+  type AgentRun,
   type AnnouncementResponse,
   type DragonTigerResponse,
   type FinancialStatementResponse,
@@ -38,6 +49,7 @@ import {
   type MarginTradingResponse,
   type NorthboundFlowResponse,
   type NewsResponse,
+  type PremarketRecommendationResponse,
   type RealtimeQuote,
   type ResearchReportResponse,
   type SectorSnapshotItem,
@@ -72,13 +84,6 @@ const TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
   second: "2-digit",
   hour12: false
 });
-
-const recommendedSeeds: StockSeed[] = [
-  { symbol: "300750", name: "宁德时代", reason: "新能源龙头，量价修复", score: 86 },
-  { symbol: "002475", name: "立讯精密", reason: "消费电子链景气回暖", score: 82 },
-  { symbol: "000333", name: "美的集团", reason: "现金流稳定，估值分位合理", score: 78 },
-  { symbol: "601012", name: "隆基绿能", reason: "低位反弹，但仍需验证", score: 72 }
-];
 
 const marketRows = [
   ["上证指数", "强弱分化", "+0.18%", "成交额维持高位，权重股托底"],
@@ -363,9 +368,19 @@ export function DataAnalysisPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [activeTab, setActiveTab] = useState<OverviewTab>("watchlist");
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [recommendations, setRecommendations] = useState<PremarketRecommendationResponse>({ scan_date: "", generated_at: null, source: "watchlist_premarket_scan", source_label: "当前自选股候选池", candidate_count: 0, items: [] });
   const [draggingSymbol, setDraggingSymbol] = useState("");
   const [symbolInput, setSymbolInput] = useState("300750");
   const [symbol, setSymbol] = useState("300750");
+  const [stockSuggestions, setStockSuggestions] = useState<StockSearchItem[]>([]);
+  const [stockSearchFocused, setStockSearchFocused] = useState(false);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
+  const [catalogSyncMessage, setCatalogSyncMessage] = useState("");
+  const [watchlistMessage, setWatchlistMessage] = useState("");
+  const [addingWatchlist, setAddingWatchlist] = useState(false);
+  const [watchlistDialogOpen, setWatchlistDialogOpen] = useState(false);
+  const [watchlistInput, setWatchlistInput] = useState("");
+  const [watchlistSuggestions, setWatchlistSuggestions] = useState<StockSearchItem[]>([]);
   const [period, setPeriod] = useState("daily");
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>(["MACD"]);
   const [overviewQuotes, setOverviewQuotes] = useState<Record<string, RealtimeQuote>>({});
@@ -388,6 +403,12 @@ export function DataAnalysisPage() {
   const [macroPmi, setMacroPmi] = useState<MacroIndicatorResponse | null>(null);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
   const [latestTask, setLatestTask] = useState<AnalysisTask | null>(null);
+  const [taskResultOpen, setTaskResultOpen] = useState(false);
+  const [taskResultLoading, setTaskResultLoading] = useState(false);
+  const [taskRun, setTaskRun] = useState<AgentRun | null>(null);
+  const [taskEvents, setTaskEvents] = useState<AnalysisTaskExecutionEvent[]>([]);
+  const [taskReport, setTaskReport] = useState<AnalysisTaskReportResponse | null>(null);
+  const [analysisRequest, setAnalysisRequest] = useState("");
   const [newsPage, setNewsPage] = useState(0);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -397,8 +418,9 @@ export function DataAnalysisPage() {
     setLoadingOverview(true);
     setError("");
     try {
-      const [watchlistResult, sectorResult, conceptResult, northboundResult, cpiResult, pmiResult] = await Promise.allSettled([
+      const [watchlistResult, recommendationResult, sectorResult, conceptResult, northboundResult, cpiResult, pmiResult] = await Promise.allSettled([
         fetchWatchlist(),
+        fetchPremarketRecommendations(),
         fetchSectorSnapshots("industry", 6),
         fetchSectorSnapshots("concept", 6),
         fetchNorthboundFlow(6),
@@ -409,12 +431,14 @@ export function DataAnalysisPage() {
         throw watchlistResult.reason;
       }
       setWatchlist(watchlistResult.value.items);
+      setRecommendations(recommendationResult.status === "fulfilled" ? recommendationResult.value : { scan_date: "", generated_at: null, source: "watchlist_premarket_scan", source_label: "当前自选股候选池", candidate_count: 0, items: [] });
       setSectorSnapshots(sectorResult.status === "fulfilled" ? sectorResult.value : null);
       setConceptSnapshots(conceptResult.status === "fulfilled" ? conceptResult.value : null);
       setNorthboundFlow(northboundResult.status === "fulfilled" ? northboundResult.value : null);
       setMacroCpi(cpiResult.status === "fulfilled" ? cpiResult.value : null);
       setMacroPmi(pmiResult.status === "fulfilled" ? pmiResult.value : null);
-      const symbols = Array.from(new Set([...watchlistResult.value.items, ...recommendedSeeds].map((item) => item.symbol)));
+      const recommendedItems = recommendationResult.status === "fulfilled" ? recommendationResult.value.items : [];
+      const symbols = Array.from(new Set([...watchlistResult.value.items, ...recommendedItems].map((item) => item.symbol)));
       const results = await Promise.allSettled(symbols.map((item) => fetchRealtimeQuote(item)));
       const nextQuotes: Record<string, RealtimeQuote> = {};
       results.forEach((result) => {
@@ -475,6 +499,30 @@ export function DataAnalysisPage() {
   }, [loadOverview]);
 
   useEffect(() => {
+    const query = symbolInput.trim();
+    if (!query || !stockSearchFocused) {
+      setStockSuggestions([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      searchStocks(query, 8).then((result) => setStockSuggestions(result.items)).catch(() => setStockSuggestions([]));
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [stockSearchFocused, symbolInput]);
+
+  useEffect(() => {
+    const query = watchlistInput.trim();
+    if (!watchlistDialogOpen || !query) {
+      setWatchlistSuggestions([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      searchStocks(query, 8).then((result) => setWatchlistSuggestions(result.items)).catch(() => setWatchlistSuggestions([]));
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [watchlistDialogOpen, watchlistInput]);
+
+  useEffect(() => {
     if (viewMode === "detail") {
       loadDetail(symbol, period);
     }
@@ -504,25 +552,123 @@ export function DataAnalysisPage() {
     setSymbol(nextSymbol);
     setSymbolInput(nextSymbol);
     setViewMode("detail");
+    setStockSuggestions([]);
+    setStockSearchFocused(false);
+    setWatchlistMessage("");
   }
 
-  function submitSearch() {
-    const nextSymbol = normalizeSymbolInput(symbolInput);
-    if (!nextSymbol) return;
-    openDetail(nextSymbol);
-  }
-
-  async function addWatchStock() {
-    const input = window.prompt("输入股票代码，例如 300750");
-    const nextSymbol = normalizeSymbolInput(input ?? "");
-    if (!nextSymbol || watchlist.some((item) => item.symbol === nextSymbol)) return;
+  async function syncCatalog() {
+    setCatalogSyncing(true);
+    setCatalogSyncMessage("");
+    setError("");
     try {
-      await addWatchlistItem(nextSymbol);
-      await loadOverview();
+      const result = await syncStockCatalog();
+      setCatalogSyncMessage(`已更新 ${result.count.toLocaleString("zh-CN")} 只 A 股，数据源：${result.provider === "sina" ? "新浪财经" : "东方财富"}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "添加自选失败");
+      setError(err instanceof Error ? err.message : "证券目录更新失败");
+    } finally {
+      setCatalogSyncing(false);
     }
   }
+
+  async function submitSearch() {
+    const input = symbolInput.trim();
+    if (!input) return;
+    const directSymbol = normalizeSymbolInput(input);
+    if (/^\d{6}$/.test(directSymbol)) {
+      openDetail(directSymbol);
+      return;
+    }
+    try {
+      const result = await searchStocks(input, 10);
+      const exact = result.items.find((item) => item.name === input || item.symbol === directSymbol) ?? result.items[0];
+      if (!exact) {
+        setError(`未找到股票：${input}`);
+        return;
+      }
+      openDetail(exact.symbol);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "股票搜索失败");
+    }
+  }
+
+  async function addSymbolToWatchlist(nextSymbol: string, name?: string): Promise<boolean> {
+    if (!nextSymbol) return false;
+    if (watchlist.some((item) => item.symbol === nextSymbol)) {
+      setWatchlistMessage(`${name || nextSymbol} 已在自选股中`);
+      return false;
+    }
+    setAddingWatchlist(true);
+    setWatchlistMessage("");
+    try {
+      const item = await addWatchlistItem(nextSymbol, name);
+      setWatchlist((current) => current.some((entry) => entry.symbol === item.symbol) ? current : [...current, item]);
+      setWatchlistMessage(`${item.name || name || item.symbol} 已加入自选股`);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "添加自选失败");
+      return false;
+    } finally {
+      setAddingWatchlist(false);
+    }
+  }
+
+  function openWatchlistDialog() {
+    setWatchlistInput("");
+    setWatchlistSuggestions([]);
+    setWatchlistDialogOpen(true);
+  }
+
+  async function submitWatchlistAdd() {
+    const input = watchlistInput.trim();
+    if (!input) return;
+    const directSymbol = normalizeSymbolInput(input);
+    if (/^\d{6}$/.test(directSymbol)) {
+      if (await addSymbolToWatchlist(directSymbol)) setWatchlistDialogOpen(false);
+      return;
+    }
+    try {
+      const result = await searchStocks(input, 8);
+      const selected = result.items.find((item) => item.name === input) ?? result.items[0];
+      if (!selected) {
+        setError(`未找到股票：${input}`);
+        return;
+      }
+      if (await addSymbolToWatchlist(selected.symbol, selected.name)) setWatchlistDialogOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "股票搜索失败");
+    }
+  }
+
+  async function selectWatchlistStock(item: StockSearchItem) {
+    if (await addSymbolToWatchlist(item.symbol, item.name)) setWatchlistDialogOpen(false);
+  }
+
+  function addCurrentStockToWatchlist() {
+    void addSymbolToWatchlist(symbol, quote?.name || klines?.name);
+  }
+
+  const watchlistDialog = watchlistDialogOpen ? (
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => setWatchlistDialogOpen(false)}>
+      <section className="modal-dialog watchlist-add-dialog" aria-modal="true" aria-labelledby="watchlist-add-title" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-dialog-header">
+          <div><h2 id="watchlist-add-title">添加自选</h2><p>输入股票代码或名称，从完整证券目录中选择。</p></div>
+          <button className="icon-btn" onClick={() => setWatchlistDialogOpen(false)} title="关闭" type="button"><X size={16} /></button>
+        </div>
+        <div className="modal-dialog-body watchlist-add-body">
+          <div className="search-row stock-search-row">
+            <input autoFocus className="input mono" onChange={(event) => setWatchlistInput(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void submitWatchlistAdd()} placeholder="输入代码或名称，例如 300750、英维克" value={watchlistInput} />
+            {watchlistSuggestions.length ? <div className="stock-suggestions">{watchlistSuggestions.map((item) => <button key={item.symbol} onClick={() => void selectWatchlistStock(item)} type="button"><strong>{item.name}</strong><span className="mono">{item.symbol} · {item.exchange}</span></button>)}</div> : null}
+          </div>
+          {watchlistMessage ? <div className="notice success">{watchlistMessage}</div> : null}
+        </div>
+        <div className="modal-dialog-footer">
+          <button className="btn btn-secondary" onClick={() => setWatchlistDialogOpen(false)} type="button">取消</button>
+          <button className="btn btn-primary" disabled={!watchlistInput.trim() || addingWatchlist} onClick={() => void submitWatchlistAdd()} type="button">{addingWatchlist ? "加入中" : "加入自选"}</button>
+        </div>
+      </section>
+    </div>
+  ) : null;
 
   async function removeWatchStock(symbolToRemove: string) {
     try {
@@ -567,39 +713,31 @@ export function DataAnalysisPage() {
   }
 
   async function runAnalysisTask(kind: "technical" | "news" | "capital_flow" | "standard") {
+    if (!analysisRequest.trim()) {
+      setError("请先填写分析需求");
+      return;
+    }
     setLoadingDetail(true);
     setError("");
     const taskMap = {
       technical: {
-        mode: "technical",
-        query: `分析 ${symbol} 的技术面结构，重点关注趋势、量价和指标。`,
-        agent_keys: ["data_steward", "technical", "risk"],
-        include_report: false
+        mode: "technical_focus"
       },
       news: {
-        mode: "news",
-        query: `分析 ${symbol} 的近期新闻、公告和研报观点。`,
-        agent_keys: ["news", "risk"],
-        include_report: false
+        mode: "news_event"
       },
       capital_flow: {
-        mode: "capital_flow",
-        query: `分析 ${symbol} 的资金流、北向、龙虎榜和两融变化。`,
-        agent_keys: ["capital_flow", "risk"],
-        include_report: false
+        mode: "capital_focus"
       },
       standard: {
-        mode: "standard",
-        query: `生成 ${symbol} 的标准 A 股投研分析报告。`,
-        agent_keys: ["data_steward", "technical", "news", "fundamental", "capital_flow", "risk", "research_director"],
-        include_report: true
+        mode: "standard"
       }
     }[kind];
     try {
       const task = await createAnalysisTask({
         symbol,
-        period,
         limit: 80,
+        query: analysisRequest.trim(),
         ...taskMap
       });
       setLatestTask(task);
@@ -610,6 +748,41 @@ export function DataAnalysisPage() {
       setError(err instanceof Error ? err.message : "分析任务创建失败");
     } finally {
       setLoadingDetail(false);
+    }
+  }
+
+  async function openTaskResult() {
+    if (!latestTask) return;
+    setTaskResultOpen(true);
+    setTaskResultLoading(true);
+    try {
+      const [events, run, report] = await Promise.all([
+        fetchAnalysisTaskExecution(latestTask.task_key),
+        latestTask.run_key ? fetchAgentRun(latestTask.run_key) : Promise.resolve(null),
+        latestTask.report_path ? fetchAnalysisTaskReport(latestTask.task_key) : Promise.resolve(null)
+      ]);
+      setTaskEvents(events.items);
+      setTaskRun(run);
+      setTaskReport(report);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "任务结果加载失败");
+    } finally {
+      setTaskResultLoading(false);
+    }
+  }
+
+  async function generateLatestTaskReport() {
+    if (!latestTask) return;
+    setTaskResultLoading(true);
+    try {
+      const updated = await generateAnalysisTaskReport(latestTask.task_key);
+      setLatestTask(updated);
+      const report = await fetchAnalysisTaskReport(updated.task_key);
+      setTaskReport(report);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "报告生成失败");
+    } finally {
+      setTaskResultLoading(false);
     }
   }
 
@@ -648,10 +821,12 @@ export function DataAnalysisPage() {
   if (viewMode === "detail") {
     const priceTone = toneByChange(quote?.change_percent);
     const displayName = quote?.name || klines?.name || symbol;
+    const isInWatchlist = watchlist.some((item) => item.symbol === symbol);
     const latestFinancial = financials?.items[0];
     const latestFundFlow = fundFlow?.items[fundFlow.items.length - 1];
 
     return (
+      <>
       <div className="page-grid analysis-layout">
         <div className="main-column">
           <Panel
@@ -662,19 +837,24 @@ export function DataAnalysisPage() {
                   <ArrowLeft size={14} />
                   返回概览
                 </button>
-                <button className="btn btn-secondary" type="button">加入观察</button>
+                <button className="btn btn-secondary" disabled={addingWatchlist || isInWatchlist} onClick={addCurrentStockToWatchlist} type="button">
+                  {isInWatchlist ? "已在自选" : addingWatchlist ? "加入中" : "加入自选"}
+                </button>
                 <button className="btn btn-primary" onClick={createSnapshot} type="button">生成分析快照</button>
               </>
             }
           >
-            <div className="search-row">
+              <div className="search-row stock-search-row">
               <input
                 className="input mono"
                 onChange={(event) => setSymbolInput(event.target.value)}
+                onFocus={() => setStockSearchFocused(true)}
+                onBlur={() => window.setTimeout(() => setStockSearchFocused(false), 120)}
                 onKeyDown={(event) => event.key === "Enter" && submitSearch()}
-                placeholder="输入股票代码，例如 300750"
+                placeholder="输入股票代码或名称，例如 300750、宁德时代"
                 value={symbolInput}
               />
+              {stockSearchFocused && stockSuggestions.length ? <div className="stock-suggestions">{stockSuggestions.map((item) => <button key={item.symbol} onMouseDown={(event) => event.preventDefault()} onClick={() => openDetail(item.symbol)} type="button"><strong>{item.name}</strong><span className="mono">{item.symbol} · {item.exchange}</span></button>)}</div> : null}
               <button className="btn btn-primary" onClick={submitSearch} type="button">
                 <Search size={14} />
                 查询
@@ -684,6 +864,7 @@ export function DataAnalysisPage() {
               </button>
             </div>
             {error ? <div className="notice error">{error}</div> : null}
+            {watchlistMessage ? <div className="notice success">{watchlistMessage}</div> : null}
             <div className="metrics-grid six">
               <Metric label={`${displayName} 最新价`} value={formatOptional(quote?.price)} meta={`${formatOptional(quote?.change_percent, "%")} 今日`} tone={priceTone} />
               <Metric label="成交额" value={formatOptional(quote?.amount, "万", 0)} meta={`成交量 ${formatOptional(quote?.volume, "手", 0)}`} />
@@ -882,26 +1063,32 @@ export function DataAnalysisPage() {
             </div>
           </Panel>
           <Panel title="分析入口">
+            <label>分析需求<textarea className="textarea" placeholder="说明你希望验证的问题、关注的证据或风险。" value={analysisRequest} onChange={(event) => setAnalysisRequest(event.target.value)} /></label>
             <div className="button-stack">
-              <button className="btn btn-primary" disabled={loadingDetail} onClick={() => runAnalysisTask("technical")} type="button">运行技术面 Agent</button>
-              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("news")} type="button">运行新闻 Agent</button>
-              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("capital_flow")} type="button">运行资金流 Agent</button>
-              <button className="btn btn-secondary" disabled={loadingDetail} onClick={() => runAnalysisTask("standard")} type="button">生成标准报告</button>
+              <button className="btn btn-primary" disabled={loadingDetail || !analysisRequest.trim()} onClick={() => runAnalysisTask("technical")} type="button">运行技术面 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail || !analysisRequest.trim()} onClick={() => runAnalysisTask("news")} type="button">运行新闻 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail || !analysisRequest.trim()} onClick={() => runAnalysisTask("capital_flow")} type="button">运行资金流 Agent</button>
+              <button className="btn btn-secondary" disabled={loadingDetail || !analysisRequest.trim()} onClick={() => runAnalysisTask("standard")} type="button">生成标准报告</button>
             </div>
             {latestTask ? (
               <div className="task-mini">
                 <span>最新任务</span>
                 <strong className="mono">{latestTask.task_key}</strong>
                 <small>{latestTask.status} · {latestTask.stage} · {latestTask.progress}%</small>
+                <button className="btn btn-secondary" onClick={() => void openTaskResult()} type="button">查看结果</button>
               </div>
             ) : null}
           </Panel>
         </aside>
       </div>
+      {watchlistDialog}
+      {taskResultOpen ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setTaskResultOpen(false)}><section className="modal-dialog task-result-dialog" aria-modal="true" aria-labelledby="task-result-title" role="dialog" onMouseDown={(event) => event.stopPropagation()}><div className="modal-dialog-header"><div><h2 id="task-result-title">任务结果</h2><p>{latestTask?.task_key} · {latestTask?.status} · {latestTask?.progress}%</p></div><button className="icon-btn" onClick={() => setTaskResultOpen(false)} title="关闭" type="button"><X size={16} /></button></div><div className="modal-dialog-body task-result-body">{taskResultLoading ? <div className="empty-hint">正在加载任务结果</div> : <>{taskRun ? <section className="task-result-section"><strong>综合结论</strong><pre>{JSON.stringify(taskRun.result, null, 2)}</pre></section> : null}<section className="task-result-section"><strong>执行步骤</strong>{taskRun?.steps.length ? taskRun.steps.map((step, index) => <details key={`${step.agent_key}-${step.tool_key}-${index}`}><summary>{step.agent_name} · {step.tool_key} · {step.status}</summary><pre>{JSON.stringify({ params: step.params, result: step.output_preview, error: step.error }, null, 2)}</pre></details>) : <div className="empty-hint">任务尚未产生工具步骤</div>}</section><section className="task-result-section"><strong>运行记录</strong>{taskEvents.length ? taskEvents.map((event) => <details key={event.id}><summary>{event.sequence}. {event.event_type} · {event.agent_name || "任务"} · {event.status}</summary><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>) : <div className="empty-hint">暂无运行记录</div>}</section>{taskReport ? <section className="task-result-section"><strong>Markdown 报告</strong><pre>{taskReport.content}</pre></section> : latestTask?.status === "completed" ? <button className="btn btn-primary" onClick={() => void generateLatestTaskReport()} type="button">生成 Markdown 报告</button> : null}</>}</div></section></div> : null}
+      </>
     );
   }
 
   return (
+    <>
     <div className="page-grid overview-layout">
       <div className="main-column">
         <Panel
@@ -913,7 +1100,7 @@ export function DataAnalysisPage() {
                 <RefreshCw size={14} />
                 刷新概览
               </button>
-              <button className="btn btn-secondary" onClick={addWatchStock} type="button">
+              <button className="btn btn-secondary" onClick={openWatchlistDialog} type="button">
                 <Plus size={14} />
                 添加自选
               </button>
@@ -921,12 +1108,19 @@ export function DataAnalysisPage() {
                 <input
                   className="input mono"
                   onChange={(event) => setSymbolInput(event.target.value)}
+                  onFocus={() => setStockSearchFocused(true)}
+                  onBlur={() => window.setTimeout(() => setStockSearchFocused(false), 120)}
                   onKeyDown={(event) => event.key === "Enter" && submitSearch()}
-                  placeholder="代码直达详情"
+                  placeholder="代码或名称"
                   value={symbolInput}
                 />
+                {stockSearchFocused && stockSuggestions.length ? <div className="stock-suggestions">{stockSuggestions.map((item) => <button key={item.symbol} onMouseDown={(event) => event.preventDefault()} onClick={() => openDetail(item.symbol)} type="button"><strong>{item.name}</strong><span className="mono">{item.symbol} · {item.exchange}</span></button>)}</div> : null}
                 <button className="btn btn-primary" onClick={submitSearch} type="button">查看详情</button>
               </div>
+              <button className="btn btn-secondary" disabled={catalogSyncing} onClick={syncCatalog} type="button">
+                <RefreshCw className={catalogSyncing ? "spin" : ""} size={14} />
+                {catalogSyncing ? "更新中" : "更新证券目录"}
+              </button>
             </>
           }
         >
@@ -938,6 +1132,8 @@ export function DataAnalysisPage() {
             ))}
           </div>
           {error ? <div className="notice error">{error}</div> : null}
+          {catalogSyncMessage ? <div className="notice success">{catalogSyncMessage}</div> : null}
+          {watchlistMessage ? <div className="notice success">{watchlistMessage}</div> : null}
           {activeTab === "watchlist" ? (
             <StockTable
               draggingSymbol={draggingSymbol}
@@ -949,7 +1145,7 @@ export function DataAnalysisPage() {
               onRemove={removeWatchStock}
             />
           ) : null}
-          {activeTab === "recommended" ? <RecommendedTable seeds={recommendedSeeds} quotes={overviewQuotes} onOpenDetail={openDetail} /> : null}
+          {activeTab === "recommended" ? <><div className="recommendation-source"><strong>{recommendations.source_label}</strong><span>{recommendations.generated_at ? `${recommendations.scan_date} · ${formatQuoteTime(recommendations.generated_at)}` : "尚未生成盘前扫描结果"}</span></div><RecommendedTable seeds={recommendations.items} quotes={overviewQuotes} onOpenDetail={openDetail} /></> : null}
           {activeTab === "market" ? (
             <MarketOverview
               concepts={conceptSnapshots}
@@ -966,20 +1162,15 @@ export function DataAnalysisPage() {
         <Panel title="概览指标">
           <div className="metrics-grid overview-metrics">
             <Metric label="自选股" value={`${watchlist.length}`} meta="当前观察池" />
-            <Metric label="推荐股" value={`${recommendedSeeds.length}`} meta="策略候选池" />
+            <Metric label="推荐股" value={`${recommendations.items.length}`} meta={recommendations.scan_date ? `${recommendations.scan_date} 盘前扫描` : "等待盘前扫描"} />
             <Metric label="上涨数量" value={`${Object.values(overviewQuotes).filter((item) => (item.change_percent ?? 0) > 0).length}`} meta="来自实时行情" tone="up" />
             <Metric label="下跌数量" value={`${Object.values(overviewQuotes).filter((item) => (item.change_percent ?? 0) < 0).length}`} meta="来自实时行情" tone="down" />
           </div>
         </Panel>
-        <Panel title="后续模块">
-          <div className="button-stack">
-            <button className="btn btn-secondary" type="button">批量刷新自选股</button>
-            <button className="btn btn-secondary" type="button">生成推荐理由</button>
-            <button className="btn btn-secondary" type="button">查看数据源日志</button>
-          </div>
-        </Panel>
       </aside>
     </div>
+    {watchlistDialog}
+    </>
   );
 }
 
@@ -1067,6 +1258,7 @@ function RecommendedTable({ seeds, quotes, onOpenDetail }: { seeds: StockSeed[];
           })}
         </tbody>
       </table>
+      {seeds.length === 0 ? <div className="empty-hint">暂无盘前候选结果，可在数据源管理中立即执行“每日盘前候选分析”。</div> : null}
     </div>
   );
 }

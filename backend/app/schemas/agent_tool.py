@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -27,3 +28,16 @@ class AgentToolRunResponse(BaseModel):
     status: str
     output: dict[str, Any]
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentToolAuditRead(BaseModel):
+    tool_key: str
+    total: int
+    failures: int
+    last_status: str
+    last_error: str
+    last_called_at: datetime | None
+
+
+class AgentToolAuditListResponse(BaseModel):
+    items: list[AgentToolAuditRead]

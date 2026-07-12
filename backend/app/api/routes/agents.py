@@ -48,7 +48,6 @@ def _agent_read(agent: AgentConfig) -> AgentRead:
         enabled=agent.enabled,
         system_prompt=agent.system_prompt,
         task_prompt=agent.task_prompt,
-        output_schema=agent.output_schema,
         variables=_json_list(agent.variables_json),
         tools=_json_list(agent.tools_json),
         current_version=agent.current_version,
@@ -63,7 +62,6 @@ def _version_read(version: AgentPromptVersion) -> AgentPromptVersionRead:
         version=version.version,
         system_prompt=version.system_prompt,
         task_prompt=version.task_prompt,
-        output_schema=version.output_schema,
         variables=_json_list(version.variables_json),
         tools=_json_list(version.tools_json),
         change_note=version.change_note,
@@ -96,7 +94,7 @@ def update_agent(
     db: Session = Depends(get_db),
 ) -> AgentRead:
     agent = _get_agent(db, agent_key)
-    for field in ("name", "role", "description", "model", "system_prompt", "task_prompt", "output_schema"):
+    for field in ("name", "role", "description", "model", "system_prompt", "task_prompt"):
         value = getattr(payload, field)
         if value is not None:
             setattr(agent, field, value)
@@ -120,7 +118,6 @@ def update_agent(
             version=next_version,
             system_prompt=agent.system_prompt,
             task_prompt=agent.task_prompt,
-            output_schema=agent.output_schema,
             variables_json=agent.variables_json,
             tools_json=agent.tools_json,
             change_note=payload.change_note or "更新提示词配置",
@@ -142,6 +139,29 @@ def list_versions(agent_key: str, db: Session = Depends(get_db)) -> AgentPromptV
     return AgentPromptVersionListResponse(items=[_version_read(version) for version in versions])
 
 
+@router.delete("/{agent_key}/versions/{version}", response_model=AgentPromptVersionRead)
+def delete_version(
+    agent_key: str,
+    version: int,
+    db: Session = Depends(get_db),
+) -> AgentPromptVersionRead:
+    agent = _get_agent(db, agent_key)
+    if version == agent.current_version:
+        raise HTTPException(status_code=400, detail="Cannot delete the current prompt version.")
+    prompt_version = db.scalar(
+        select(AgentPromptVersion).where(
+            AgentPromptVersion.agent_key == agent_key,
+            AgentPromptVersion.version == version,
+        )
+    )
+    if not prompt_version:
+        raise HTTPException(status_code=404, detail="Prompt version not found.")
+    response = _version_read(prompt_version)
+    db.delete(prompt_version)
+    db.commit()
+    return response
+
+
 @router.post("/{agent_key}/rollback", response_model=AgentRead)
 def rollback_agent(
     agent_key: str,
@@ -159,7 +179,6 @@ def rollback_agent(
         raise HTTPException(status_code=404, detail="Prompt version not found.")
     agent.system_prompt = version.system_prompt
     agent.task_prompt = version.task_prompt
-    agent.output_schema = version.output_schema
     agent.variables_json = version.variables_json
     agent.tools_json = version.tools_json
     agent.current_version += 1
@@ -170,7 +189,6 @@ def rollback_agent(
             version=agent.current_version,
             system_prompt=agent.system_prompt,
             task_prompt=agent.task_prompt,
-            output_schema=agent.output_schema,
             variables_json=agent.variables_json,
             tools_json=agent.tools_json,
             change_note=payload.change_note,
@@ -219,7 +237,6 @@ def _render_agent(agent: AgentConfig, variables: dict[str, str]) -> AgentRenderR
     def replace(text: str) -> str:
         result = text
         for name in sorted(all_names):
-            token = "{{" + name + "}}"
             value = variables.get(name)
             if value is None:
                 missing.append(name)
@@ -231,7 +248,6 @@ def _render_agent(agent: AgentConfig, variables: dict[str, str]) -> AgentRenderR
         agent_key=agent.key,
         rendered_system_prompt=replace(agent.system_prompt),
         rendered_task_prompt=replace(agent.task_prompt),
-        output_schema=agent.output_schema,
         missing_variables=sorted(set(missing)),
         tools=_json_list(agent.tools_json),
     )

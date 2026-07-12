@@ -32,20 +32,21 @@ def create_analysis_snapshot(
         "warnings": [],
     }
 
-    try:
-        snapshot_payload["quote"] = get_realtime_quote(db, symbol).model_dump(mode="json")
-    except DataFetchError as exc:
-        snapshot_payload["warnings"].append({"stage": "quote", "message": str(exc)})
+    if symbol:
+        try:
+            snapshot_payload["quote"] = get_realtime_quote(db, symbol).model_dump(mode="json")
+        except DataFetchError as exc:
+            snapshot_payload["warnings"].append({"stage": "quote", "message": str(exc)})
 
-    try:
-        kline = get_klines(db, symbol=symbol, period=payload.period, limit=payload.limit)
-        snapshot_payload["kline"] = kline.model_dump(mode="json")
-        snapshot_payload["indicators"] = calculate_indicators(
-            kline,
-            ["ma", "macd", "rsi", "kdj", "boll"],
-        ).model_dump(mode="json")
-    except DataFetchError as exc:
-        snapshot_payload["warnings"].append({"stage": "kline", "message": str(exc)})
+        try:
+            kline = get_klines(db, symbol=symbol, period=payload.period, limit=payload.limit)
+            snapshot_payload["kline"] = kline.model_dump(mode="json")
+            snapshot_payload["indicators"] = calculate_indicators(
+                kline,
+                ["ma", "macd", "rsi", "kdj", "boll"],
+            ).model_dump(mode="json")
+        except DataFetchError as exc:
+            snapshot_payload["warnings"].append({"stage": "kline", "message": str(exc)})
 
     try:
         snapshot_payload["market_news"] = get_market_news(db, limit=payload.news_limit).model_dump(mode="json")
@@ -58,7 +59,7 @@ def create_analysis_snapshot(
                 db,
                 KnowledgeSearchRequest(
                     query=query,
-                    symbols=[symbol],
+                    symbols=[symbol] if symbol else [],
                     top_k=8,
                     require_citations=True,
                 ),
@@ -89,7 +90,9 @@ def snapshot_brief(snapshot: DataSnapshotRead | None) -> str:
     indicators = data.get("indicators") or {}
     news = data.get("market_news") or {}
     knowledge = data.get("knowledge_context") or {}
-    parts = [f"snapshot:{snapshot.id}", f"symbol:{snapshot.symbol}", f"period:{snapshot.period}"]
+    parts = [f"snapshot:{snapshot.id}", f"period:{snapshot.period}"]
+    if snapshot.symbol:
+        parts.insert(1, f"symbol:{snapshot.symbol}")
     if quote:
         parts.append(f"price:{quote.get('price')}")
         parts.append(f"quote_provider:{quote.get('provider_key')}")

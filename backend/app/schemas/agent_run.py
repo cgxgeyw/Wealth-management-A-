@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 
 class AgentRunCreateRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=40)
+    # A task may analyze a market, sector, or research question without a single-stock target.
+    symbol: str = Field(default="", max_length=40)
     query: str = ""
     mode: str = "analysis"
     agent_keys: list[str] = Field(default_factory=list)

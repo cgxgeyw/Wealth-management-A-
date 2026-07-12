@@ -1,9 +1,14 @@
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 import app.services.data_fetcher as data_fetcher
 import app.services.scheduler as scheduler
+import app.services.stock_catalog as stock_catalog
+from app.db.session import Base
 from app.main import app
 
 
@@ -175,6 +180,42 @@ def test_stock_search_and_profile() -> None:
     assert search_response.json()["items"][0]["symbol"] == "300750"
     assert profile_response.status_code == 200
     assert profile_response.json()["name"] == "宁德时代"
+
+
+def test_stock_search_supports_name_query() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/stocks/search?q=英维克")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["symbol"] == "002837"
+
+
+def test_stock_catalog_sync_uses_full_market_source_and_searches_name_and_code(monkeypatch) -> None:
+    def fake_sina_catalog(_client):
+        return [{"symbol": "sh600000", "code": "600000", "name": "浦发银行"}] + [
+            {"symbol": f"sh{600000 + index:06d}", "code": f"{600000 + index:06d}", "name": f"测试股票{index}"}
+            for index in range(1, 1000)
+        ]
+
+    monkeypatch.setattr(
+        stock_catalog,
+        "_fetch_sina_catalog",
+        fake_sina_catalog,
+    )
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        count, provider = stock_catalog.sync_stock_catalog(session)
+        by_name = stock_catalog.search_stocks(session, "浦发", 5)
+        by_code = stock_catalog.search_stocks(session, "600000", 5)
+    finally:
+        session.close()
+
+    assert (count, provider) == (1000, "sina")
+    assert by_name[0].symbol == "600000"
+    assert by_code[0].name == "浦发银行"
 
 
 def test_stock_indicators(monkeypatch) -> None:
@@ -464,6 +505,30 @@ def test_scheduled_task_manual_run_and_logs() -> None:
     assert logs_response.status_code == 200
     logs = logs_response.json()["items"]
     assert any(item["task_key"] == task_key for item in logs)
+
+
+def test_premarket_analysis_persists_ranked_watchlist_candidates(monkeypatch) -> None:
+    def fake_klines(db, symbol: str, period: str, limit: int):
+        base = 80 + int(symbol[-2:]) / 10
+        bars = [SimpleNamespace(close=base + index * 0.5, volume=1000 + index * 30) for index in range(30)]
+        return SimpleNamespace(name=f"测试{symbol}", items=bars)
+
+    monkeypatch.setattr(scheduler, "get_klines", fake_klines)
+
+    with TestClient(app) as client:
+        run = client.post("/api/data/scheduled-tasks/premarket_watchlist_analysis/run")
+        result = client.get("/api/data/premarket-recommendations")
+        tasks = client.get("/api/data/scheduled-tasks")
+
+    assert run.status_code == 200
+    assert run.json()["status"] == "success"
+    assert result.status_code == 200
+    assert result.json()["source_label"] == "当前自选股候选池"
+    assert result.json()["items"]
+    assert result.json()["items"][0]["rank"] == 1
+    assert result.json()["items"] == sorted(result.json()["items"], key=lambda item: item["score"], reverse=True)
+    premarket_task = next(item for item in tasks.json()["items"] if item["key"] == "premarket_watchlist_analysis")
+    assert premarket_task["schedule"] == "交易日 08:30"
 
 
 def test_market_news_alias(monkeypatch) -> None:

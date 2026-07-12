@@ -15,7 +15,6 @@ class AgentRead(BaseModel):
     enabled: bool
     system_prompt: str
     task_prompt: str
-    output_schema: str
     variables: list[str]
     tools: list[str]
     current_version: int
@@ -36,7 +35,6 @@ class AgentUpdateRequest(BaseModel):
     enabled: bool | None = None
     system_prompt: str | None = None
     task_prompt: str | None = None
-    output_schema: str | None = None
     variables: list[str] | None = None
     tools: list[str] | None = None
     change_note: str = ""
@@ -48,7 +46,6 @@ class AgentPromptVersionRead(BaseModel):
     version: int
     system_prompt: str
     task_prompt: str
-    output_schema: str
     variables: list[str]
     tools: list[str]
     change_note: str
@@ -72,7 +69,6 @@ class AgentRenderResponse(BaseModel):
     agent_key: str
     rendered_system_prompt: str
     rendered_task_prompt: str
-    output_schema: str
     missing_variables: list[str]
     tools: list[str]
 

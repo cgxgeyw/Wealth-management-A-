@@ -12,10 +12,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.agent import AgentConfig
+from app.models.agent_audit import AgentToolCallAudit
 from app.schemas.agent_chat import AgentChatKnowledgeHit, AgentChatRequest, AgentChatResponse, AgentChatToolCall
-from app.schemas.knowledge import KnowledgeSearchRequest
 from app.services.agent_tools import AgentToolError, execute_tool, get_tool_spec
-from app.services.knowledge_base import search_knowledge
+from app.services.agent_skills import assigned_skill_catalog, load_assigned_skill
+from app.services.model_runtime import get_model_runtime
 from app.services.stock_catalog import get_stock_profile
 
 
@@ -25,21 +26,24 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
         raise AgentToolError("Agent not found.", status_code=404)
     symbol = _resolve_symbol(payload)
     variables = _build_variables(symbol, payload)
-    tool_calls = _run_context_tools(db, agent, symbol, payload)
-    knowledge_hits = _search_knowledge_hits(db, payload, symbol)
+    tool_calls: list[AgentChatToolCall] = []
+    knowledge_hits: list[AgentChatKnowledgeHit] = []
     fallback = _fallback_reply(agent, payload, symbol, tool_calls)
     model_status = "fallback_no_api_key"
     model = ""
     content = fallback
-    if settings.llm_api_key:
+    runtime = get_model_runtime(db, "chat", agent.model)
+    if runtime.api_key:
         try:
-            content = _call_llm(agent, payload, variables, tool_calls, knowledge_hits)
+            content, tool_calls = _run_agent_tool_loop(db, agent, payload, variables)
+            fallback = _fallback_reply(agent, payload, symbol, tool_calls)
+            content = content or fallback
             model_status = "llm_completed"
-            model = settings.llm_model
+            model = runtime.model
         except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as exc:
             content = f"{fallback}\n\n模型调用失败：{exc}"
             model_status = "fallback_llm_error"
-            model = settings.llm_model
+            model = runtime.model
     return AgentChatResponse(
         agent_key=agent.key,
         agent_name=agent.name,
@@ -52,165 +56,146 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
     )
 
 
-def _run_context_tools(db: Session, agent: AgentConfig, symbol: str, payload: AgentChatRequest) -> list[AgentChatToolCall]:
-    tool_keys = _json_list(agent.tools_json)
-    selected = _select_tools(tool_keys, payload.message, payload.max_tool_calls)
-    calls: list[AgentChatToolCall] = []
-    for tool_key in selected:
-        params = _tool_params(tool_key, symbol, payload)
-        if params is None:
-            continue
-        try:
-            output = execute_tool(db, tool_key, params)
-            calls.append(
-                AgentChatToolCall(
-                    tool_key=tool_key,
-                    status="success",
-                    params=params,
-                    output_preview=_preview_output(output),
-                )
-            )
-        except AgentToolError as exc:
-            calls.append(AgentChatToolCall(tool_key=tool_key, status="failed", params=params, error=str(exc)))
-    return calls
-
-
-def _select_tools(tool_keys: list[str], message: str, limit: int) -> list[str]:
-    if limit <= 0:
-        return []
-    lower = message.lower()
-    priorities: list[str] = []
-    keyword_map = [
-        ("stock.indicators", ["技术", "指标", "macd", "kdj", "rsi", "boll", "均线"]),
-        ("stock.bars", ["k线", "走势", "趋势", "支撑", "压力", "量价"]),
-        ("stock.news", ["新闻", "消息", "事件", "舆情"]),
-        ("stock.announcements", ["公告", "披露"]),
-        ("stock.research_reports", ["研报", "评级"]),
-        ("stock.fundamentals", ["基本面", "估值", "pe", "pb", "roe", "利润"]),
-        ("stock.financial_statements", ["财报", "利润表", "资产负债", "现金流"]),
-        ("stock.fund_flow", ["资金", "主力", "流入", "流出"]),
-        ("stock.dragon_tiger", ["龙虎榜", "游资"]),
-        ("stock.margin_trading", ["融资", "融券", "两融"]),
-        ("stock.lockup_expiry", ["解禁", "减持"]),
-        ("market.macro", ["宏观", "cpi", "pmi"]),
-        ("sector.snapshots", ["行业", "板块", "概念"]),
-        ("knowledge.search", ["知识库", "资料", "规则", "策略"]),
-    ]
-    for tool_key, keywords in keyword_map:
-        if tool_key in tool_keys and any(keyword in lower or keyword in message for keyword in keywords):
-            priorities.append(tool_key)
-    if "stock.quote" in tool_keys:
-        priorities.insert(0, "stock.quote")
-    for tool_key in tool_keys:
-        if tool_key not in priorities and tool_key != "document.write":
-            priorities.append(tool_key)
-    return priorities[:limit]
-
-
-def _tool_params(tool_key: str, symbol: str, payload: AgentChatRequest) -> dict[str, Any] | None:
-    try:
-        spec = get_tool_spec(tool_key)
-    except AgentToolError:
-        return None
-    if not spec.enabled:
-        return None
-    if tool_key in {"stock.quote", "stock.fundamentals"}:
-        return {"symbol": symbol}
-    if tool_key in {
-        "stock.news",
-        "stock.announcements",
-        "stock.research_reports",
-        "stock.fund_flow",
-        "stock.dragon_tiger",
-        "stock.lockup_expiry",
-        "stock.margin_trading",
-    }:
-        return {"symbol": symbol, "limit": 20}
-    if tool_key == "stock.bars":
-        return {"symbol": symbol, "period": payload.variables.get("period", "daily"), "limit": 80}
-    if tool_key == "stock.indicators":
-        return {"symbol": symbol, "period": payload.variables.get("period", "daily"), "limit": 80}
-    if tool_key == "stock.financial_statements":
-        return {"symbol": symbol, "statement_type": "income", "limit": 4}
-    if tool_key == "knowledge.search":
-        return {"query": payload.message, "symbols": [symbol], "top_k": 5, "require_citations": True}
-    if tool_key == "market.northbound_flow":
-        return {"limit": 20}
-    if tool_key == "sector.snapshots":
-        return {"sector_type": "industry", "limit": 10}
-    if tool_key == "market.macro":
-        return {"indicator": "cpi", "limit": 6}
-    if tool_key == "data.quality":
-        return {"log_limit": 200}
-    return None
-
-
-def _call_llm(
+def _run_agent_tool_loop(
+    db: Session,
     agent: AgentConfig,
     payload: AgentChatRequest,
     variables: dict[str, str],
-    tool_calls: list[AgentChatToolCall],
-    knowledge_hits: list[AgentChatKnowledgeHit],
-) -> str:
-    messages: list[dict[str, str]] = [
+) -> tuple[str, list[AgentChatToolCall]]:
+    skill_catalog = assigned_skill_catalog(db, agent.key)
+    allowed = _chat_tool_definitions(agent, skill_catalog)
+    tool_by_function = {item["function"]["name"]: item["tool_key"] for item in allowed}
+    messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": (
-                _render(agent.system_prompt, variables)
-                + "\n你正在进行单 Agent 对话。不要输出固定报告 JSON。"
-                + "可以自然追问，但涉及行情、新闻、财务时必须说明依据来自工具结果。"
-            ),
+            "content": _render(agent.system_prompt, variables)
+            + ("\n\n可用 Skill 目录：" + json.dumps(skill_catalog, ensure_ascii=False)
+               + "。需要时调用 skill__load 获取完整 instruction；未加载的 Skill 不得假装已经遵循。" if skill_catalog else "")
+            + "\n根据需要调用工具；没有可靠参数时先追问，不要猜测。",
         },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "task_prompt": _render(agent.task_prompt, variables),
-                    "tool_context": [call.model_dump(mode="json") for call in tool_calls],
-                    "knowledge_hits": [item.model_dump(mode="json") for item in knowledge_hits],
-                    "question": payload.message,
-                },
-                ensure_ascii=False,
-            ),
-        },
+        {"role": "user", "content": _render(agent.task_prompt, variables) + "\n\n用户问题：" + payload.message},
     ]
     for item in payload.history[-8:]:
         if item.role in {"user", "assistant"}:
             messages.insert(-1, {"role": item.role, "content": item.content})
-    with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
+
+    calls: list[AgentChatToolCall] = []
+    while len(calls) < payload.max_tool_calls:
+        message = _request_chat_turn(db, agent.model, messages, allowed, agent.temperature)
+        requested = message.get("tool_calls") or []
+        if not isinstance(requested, list) or not requested:
+            return str(message.get("content") or ""), calls
+        messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": requested})
+        for tool_call in requested[: payload.max_tool_calls - len(calls)]:
+            output: dict[str, Any] | None = None
+            function = tool_call.get("function") if isinstance(tool_call, dict) else None
+            function_name = function.get("name") if isinstance(function, dict) else ""
+            tool_key = tool_by_function.get(str(function_name), str(function_name))
+            params, parse_error = _tool_call_params(function)
+            if function_name not in tool_by_function:
+                call = AgentChatToolCall(tool_key=tool_key, status="failed", error="模型请求了未授权工具。")
+            elif parse_error:
+                call = AgentChatToolCall(tool_key=tool_key, status="failed", error=parse_error)
+            else:
+                try:
+                    if tool_key == "skill.load":
+                        output = load_assigned_skill(db, agent.key, str(params.get("skill_key") or ""), "chat")
+                    else:
+                        output = execute_tool(db, tool_key, params)
+                    call = AgentChatToolCall(tool_key=tool_key, status="success", params=params, output_preview=_preview_output(output))
+                except (AgentToolError, ValueError) as exc:
+                    call = AgentChatToolCall(tool_key=tool_key, status="failed", params=params, error=str(exc))
+            calls.append(call)
+            db.add(AgentToolCallAudit(agent_key=agent.key, tool_key=tool_key, status=call.status, error=call.error))
+            db.commit()
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": str(tool_call.get("id") or ""),
+                    "content": json.dumps(
+                        {"tool_key": tool_key, "status": call.status, "output": output, "error": call.error},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+            )
+    message = _request_chat_turn(db, agent.model, messages, allowed, agent.temperature)
+    return str(message.get("content") or ""), calls
+
+
+def _chat_tool_definitions(agent: AgentConfig, skill_catalog: list[dict[str, str]]) -> list[dict[str, Any]]:
+    definitions: list[dict[str, Any]] = []
+    for tool_key in _json_list(agent.tools_json):
+        try:
+            spec = get_tool_spec(tool_key)
+        except AgentToolError:
+            continue
+        if not spec.enabled:
+            continue
+        definitions.append(
+            {
+                "type": "function",
+                "tool_key": tool_key,
+                "function": {
+                    "name": "tool__" + tool_key.replace(".", "_").replace("-", "_"),
+                    "description": spec.description,
+                    "parameters": spec.input_schema or {"type": "object", "properties": {}},
+                },
+            }
+        )
+    if skill_catalog:
+        definitions.append(
+            {
+                "type": "function",
+                "tool_key": "skill.load",
+                "function": {
+                    "name": "skill__load",
+                    "description": "按需加载一个已授权 Skill 的完整 instruction。",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["skill_key"],
+                        "properties": {
+                            "skill_key": {
+                                "type": "string",
+                                "enum": [item["key"] for item in skill_catalog],
+                            }
+                        },
+                    },
+                },
+            }
+        )
+    return definitions
+
+
+def _request_chat_turn(db: Session, preferred_model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]], temperature: float) -> dict[str, Any]:
+    runtime = get_model_runtime(db, "chat", preferred_model)
+    with httpx.Client(timeout=runtime.timeout_seconds) as client:
         response = client.post(
-            settings.llm_base_url.rstrip("/") + "/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
-            json={"model": settings.llm_model, "messages": messages, "temperature": agent.temperature},
+            runtime.base_url.rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {runtime.api_key}", "Content-Type": "application/json"},
+            json={
+                "model": runtime.model,
+                "messages": messages,
+                "tools": [{"type": item["type"], "function": item["function"]} for item in tools],
+                "tool_choice": "auto",
+                "temperature": temperature,
+            },
         )
         response.raise_for_status()
-    return str(response.json()["choices"][0]["message"]["content"])
+    message = response.json()["choices"][0]["message"]
+    if not isinstance(message, dict):
+        raise ValueError("LLM tool-call response is not an object.")
+    return message
 
 
-def _search_knowledge_hits(db: Session, payload: AgentChatRequest, symbol: str) -> list[AgentChatKnowledgeHit]:
+def _tool_call_params(function: Any) -> tuple[dict[str, Any], str]:
+    if not isinstance(function, dict):
+        return {}, "模型返回了无效的工具调用。"
     try:
-        result = search_knowledge(
-            db,
-            KnowledgeSearchRequest(
-                query=payload.message,
-                symbols=[symbol] if symbol else [],
-                top_k=5,
-                require_citations=True,
-            ),
-        )
-    except Exception:
-        return []
-    return [
-        AgentChatKnowledgeHit(
-            citation=item.citation,
-            title=item.title,
-            snippet=item.snippet,
-            score=item.score,
-            source=item.source,
-            tags=item.tags,
-        )
-        for item in result.items
-    ]
+        params = json.loads(str(function.get("arguments") or "{}"))
+    except json.JSONDecodeError:
+        return {}, "模型返回的工具参数不是有效 JSON。"
+    return (params, "") if isinstance(params, dict) else ({}, "模型返回的工具参数必须是对象。")
 
 
 def _fallback_reply(
