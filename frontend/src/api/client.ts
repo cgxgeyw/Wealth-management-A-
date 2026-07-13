@@ -192,6 +192,8 @@ export interface AgentChatKnowledgeHit {
 }
 
 export interface AgentChatResponse {
+  conversation_id: string;
+  turn_id: string;
   agent_key: string;
   agent_name: string;
   content: string;
@@ -200,6 +202,25 @@ export interface AgentChatResponse {
   tool_calls: AgentChatToolCall[];
   knowledge_hits: AgentChatKnowledgeHit[];
   created_at: string;
+}
+
+export interface AgentChatTraceEvent {
+  conversation_id: string;
+  turn_id: string;
+  agent_key: string;
+  event_type: string;
+  sequence: number;
+  status: string;
+  model: string;
+  detail: Record<string, unknown>;
+  error: string;
+  created_at: string;
+}
+
+export interface AgentChatTraceResponse {
+  conversation_id: string;
+  turn_id: string;
+  items: AgentChatTraceEvent[];
 }
 
 export interface AgentRunStep {
@@ -903,9 +924,13 @@ export interface CacheClearResponse {
 export interface ScheduledTask {
   key: string;
   name: string;
+  description: string;
+  category: string;
   interval_seconds: number;
   schedule: string;
   enabled: boolean;
+  configurable: boolean;
+  daily_time: string | null;
   last_status: string | null;
   last_message: string | null;
   last_started_at: string | null;
@@ -1088,6 +1113,7 @@ export function sendAgentChat(
   agentKey: string,
   payload: {
     message: string;
+    conversation_id?: string;
     symbol?: string;
     variables?: Record<string, string>;
     history?: AgentChatMessage[];
@@ -1095,6 +1121,11 @@ export function sendAgentChat(
   }
 ): Promise<AgentChatResponse> {
   return postJson<AgentChatResponse>(`/api/agent-chat/${encodeURIComponent(agentKey)}`, payload);
+}
+
+export function fetchAgentChatTrace(conversationId: string, turnId = ""): Promise<AgentChatTraceResponse> {
+  const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : "";
+  return getJson<AgentChatTraceResponse>(`/api/agent-chat/conversations/${encodeURIComponent(conversationId)}${query}`);
 }
 
 export function createAgentRun(payload: AgentRunCreatePayload): Promise<AgentRun> {
@@ -1530,6 +1561,10 @@ export function fetchScheduledTasks(): Promise<ScheduledTaskListResponse> {
 
 export function runScheduledTask(taskKey: string): Promise<ScheduledTaskRun> {
   return postJson<ScheduledTaskRun>(`/api/data/scheduled-tasks/${encodeURIComponent(taskKey)}/run`, {});
+}
+
+export function updateScheduledTask(taskKey: string, payload: { enabled: boolean; daily_time: string | null }): Promise<ScheduledTask> {
+  return patchJson<ScheduledTask>(`/api/data/scheduled-tasks/${encodeURIComponent(taskKey)}`, payload);
 }
 
 export function fetchScheduledTaskRuns(limit = 20): Promise<ScheduledTaskRunListResponse> {

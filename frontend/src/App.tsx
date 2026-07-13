@@ -3,6 +3,7 @@ import {
   BarChart3,
   Bot,
   BrainCircuit,
+  CalendarClock,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -10,7 +11,10 @@ import {
   History,
   LibraryBig,
   MessageSquareText,
+  Play,
+  Plus,
   Puzzle,
+  Save,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -50,6 +54,8 @@ import {
   fetchKnowledgeDocuments,
   fetchKnowledgeImportTasks,
   fetchModelConfigs,
+  fetchPremarketRecommendations,
+  fetchScheduledTasks,
   queueKnowledgeDocumentImport,
   reindexAllKnowledgeDocuments,
   reindexKnowledgeDocument,
@@ -58,6 +64,7 @@ import {
   renderAgentPrompt,
   rollbackAgent,
   runAgentTool,
+  runScheduledTask,
   searchKnowledge,
   sendAgentChat,
   updateAgent,
@@ -65,12 +72,14 @@ import {
   updateKnowledgeBase,
   updateKnowledgeChunk,
   updateKnowledgeDocument,
+  updateScheduledTask,
   type AgentConfig,
   type AgentPromptVersion,
   type AgentRenderResponse,
   type AgentRun,
   type AgentChatMessage,
   type AgentChatResponse,
+  type AgentChatToolCall,
   type AgentToolRunResponse,
   type AgentToolSpec,
   type AnalysisTask,
@@ -87,7 +96,9 @@ import {
   type KnowledgeImportTask,
   type KnowledgeSearchItem,
   type ModelCapability,
-  type ModelConfig
+  type ModelConfig,
+  type PremarketRecommendationResponse,
+  type ScheduledTask
 } from "./api/client";
 import { DataAnalysisPage } from "./pages/DataAnalysisPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
@@ -207,13 +218,34 @@ function isTaskActive(task: AnalysisTask | null): boolean {
   return task ? ["pending", "running"].includes(task.status) : false;
 }
 
+type ChatDisplayMessage = AgentChatMessage & {
+  conversationId?: string;
+  turnId?: string;
+  modelStatus?: string;
+  toolCalls?: AgentChatToolCall[];
+};
+
+type ChatConversation = {
+  id: string;
+  title: string;
+  agentKey: string;
+  backendConversationId?: string;
+  messages: ChatDisplayMessage[];
+  latestResponse: AgentChatResponse | null;
+};
+
 function ChatAnalysisPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [selectedKey, setSelectedKey] = useState("technical");
   const [input, setInput] = useState("300750 现在技术面怎么看？");
-  const [messages, setMessages] = useState<AgentChatMessage[]>([]);
-  const [latestResponse, setLatestResponse] = useState<AgentChatResponse | null>(null);
-  const [agentListCollapsed, setAgentListCollapsed] = useState(false);
+  const [conversations, setConversations] = useState<ChatConversation[]>([{
+    id: "local-draft",
+    title: "新对话",
+    agentKey: "technical",
+    messages: [],
+    latestResponse: null,
+  }]);
+  const [activeConversationId, setActiveConversationId] = useState("local-draft");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -230,14 +262,47 @@ function ChatAnalysisPage() {
     });
   }, []);
 
+  const activeConversation = conversations.find((item) => item.id === activeConversationId) ?? conversations[0];
+  const messages = activeConversation?.messages ?? [];
+  const latestResponse = activeConversation?.latestResponse ?? null;
+
+  function createConversation() {
+    if (!activeConversation || activeConversation.messages.length === 0) {
+      setInput("");
+      setMessage("");
+      return;
+    }
+    const id = `local-${Date.now()}`;
+    setConversations((items) => [...items, {
+      id,
+      title: "新对话",
+      agentKey: selectedKey,
+      messages: [],
+      latestResponse: null,
+    }]);
+    setActiveConversationId(id);
+    setInput("");
+    setMessage("");
+  }
+
+  function selectAgent(agentKey: string) {
+    setSelectedKey(agentKey);
+    setConversations((items) => items.map((item) => item.id === activeConversationId ? { ...item, agentKey } : item));
+  }
+
   async function sendMessage() {
     const text = input.trim();
     if (!text || !selectedKey) {
       return;
     }
-    const userMessage: AgentChatMessage = { role: "user", content: text };
+    const userMessage: ChatDisplayMessage = { role: "user", content: text };
     const nextHistory = [...messages, userMessage];
-    setMessages(nextHistory);
+    setConversations((items) => items.map((item) => item.id === activeConversationId ? {
+      ...item,
+      agentKey: selectedKey,
+      title: item.messages.length === 0 ? text.slice(0, 28) : item.title,
+      messages: nextHistory,
+    } : item));
     setInput("");
     setSending(true);
     setMessage("");
@@ -246,13 +311,29 @@ function ChatAnalysisPage() {
         message: text,
         variables: { period: "daily" },
         history: messages,
+        conversation_id: activeConversation?.backendConversationId,
         max_tool_calls: 4
       });
-      setLatestResponse(response);
-      setMessages([...nextHistory, { role: "assistant", content: response.content }]);
+      const assistantMessage: ChatDisplayMessage = {
+        role: "assistant",
+        content: response.content,
+        conversationId: response.conversation_id,
+        turnId: response.turn_id,
+        modelStatus: response.model_status,
+        toolCalls: response.tool_calls,
+      };
+      setConversations((items) => items.map((item) => item.id === activeConversationId ? {
+        ...item,
+        backendConversationId: response.conversation_id,
+        latestResponse: response,
+        messages: [...nextHistory, assistantMessage],
+      } : item));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Agent 对话失败");
-      setMessages([...nextHistory, { role: "assistant", content: "这次对话失败了，请检查 Agent 配置、模型配置或数据源状态后再试。" }]);
+      setConversations((items) => items.map((item) => item.id === activeConversationId ? {
+        ...item,
+        messages: [...nextHistory, { role: "assistant", content: "这次对话失败了，请检查 Agent 配置、模型配置或数据源状态后再试。" }],
+      } : item));
     } finally {
       setSending(false);
     }
@@ -261,52 +342,34 @@ function ChatAnalysisPage() {
   const selectedAgent = agents.find((agent) => agent.key === selectedKey) ?? null;
 
   return (
-    <div className={agentListCollapsed ? "chat-layout agent-collapsed" : "chat-layout"}>
-      <Panel
-        title={agentListCollapsed ? "" : "Agent"}
-        className="chat-agent-panel"
-        actions={
-          <button className="icon-btn" onClick={() => setAgentListCollapsed((current) => !current)} title={agentListCollapsed ? "展开 Agent 列表" : "收起 Agent 列表"} type="button">
-            {agentListCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
-          </button>
-        }
-      >
-        {agentListCollapsed ? (
-          <div className="agent-rail">
-            <button className="agent-rail-toggle" onClick={() => setAgentListCollapsed(false)} type="button">
-              <ChevronRight size={15} />
+    <div className="chat-layout">
+      <aside className="conversation-sidebar">
+        <div className="conversation-sidebar-head"><strong>对话</strong><button className="icon-btn" onClick={createConversation} title="新建对话" type="button"><Plus size={15} /></button></div>
+        <div className="conversation-list">
+          {conversations.map((conversation) => (
+            <button className={conversation.id === activeConversationId ? "active" : ""} key={conversation.id} onClick={() => { setActiveConversationId(conversation.id); setSelectedKey(conversation.agentKey); }} type="button">
+              <MessageSquareText size={14} /><span>{conversation.title}</span><small>{conversation.messages.length}</small>
             </button>
-            {agents.map((agent) => (
-              <button className={selectedKey === agent.key ? "agent-rail-item active" : "agent-rail-item"} key={agent.key} onClick={() => setSelectedKey(agent.key)} title={agent.name} type="button">
-                <Bot size={15} />
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="agent-list">
-            {agents.map((agent) => (
-              <button className={selectedKey === agent.key ? "agent-row active" : "agent-row"} key={agent.key} onClick={() => setSelectedKey(agent.key)} type="button">
-                <div className="agent-avatar"><Bot size={15} /></div>
-                <div>
-                  <strong>{agent.name}</strong>
-                  <span>{agent.role || agent.key}</span>
-                </div>
-              </button>
-            ))}
-            {agents.length === 0 ? <div className="empty-hint">暂无可用 Agent</div> : null}
-          </div>
-        )}
-      </Panel>
+          ))}
+        </div>
+      </aside>
 
       <Panel
         title={selectedAgent ? `${selectedAgent.name} 对话` : "Agent 对话"}
-        actions={<button className="btn btn-secondary" onClick={() => { setMessages([]); setLatestResponse(null); }} type="button">清空</button>}
+        actions={<div className="chat-toolbar"><label><Bot size={15} /><select aria-label="选择智能体" value={selectedKey} onChange={(event) => selectAgent(event.target.value)}>{agents.map((agent) => <option key={agent.key} value={agent.key}>{agent.name} · {agent.role || agent.key}</option>)}</select></label><button className="btn btn-secondary" onClick={() => setConversations((items) => items.map((item) => item.id === activeConversationId ? { ...item, messages: [], latestResponse: null } : item))} type="button">清空</button></div>}
       >
         {message ? <div className="notice error">{message}</div> : null}
         <div className="message-list chat-thread">
           {messages.map((item, index) => (
             <div className={`msg ${item.role === "user" ? "user" : "agent"}`} key={`${item.role}-${index}`}>
               <p>{item.content}</p>
+              {item.role === "assistant" && item.turnId ? (
+                <div className="chat-turn-meta">
+                  <code>{item.conversationId}</code>
+                  <span>{item.modelStatus}</span>
+                  <span>{item.toolCalls?.length ?? 0} tools</span>
+                </div>
+              ) : null}
             </div>
           ))}
           {messages.length === 0 ? <div className="empty-hint">暂无消息</div> : null}
@@ -1511,6 +1574,15 @@ function mapAnalysisTaskTemplate(template: AnalysisTaskTemplate): AnalysisPreset
 
 function AssistedAnalysisPage() {
   const [templates, setTemplates] = useState<AnalysisPreset[]>([]);
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [recommendations, setRecommendations] = useState<PremarketRecommendationResponse>({
+    scan_date: "",
+    generated_at: null,
+    source: "watchlist_premarket_scan",
+    source_label: "当前自选股候选池",
+    candidate_count: 0,
+    items: []
+  });
   const [presetKey, setPresetKey] = useState("");
   const [groupKey, setGroupKey] = useState("");
   const [query, setQuery] = useState("");
@@ -1520,29 +1592,45 @@ function AssistedAnalysisPage() {
   const [report, setReport] = useState<AnalysisTaskReportResponse | null>(null);
   const [message, setMessage] = useState("");
   const [running, setRunning] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [scheduleTime, setScheduleTime] = useState("08:30");
   const [loadingTemplates, setLoadingTemplates] = useState(true);
 
   const preset = templates.find((item) => item.key === presetKey) ?? null;
+  const scheduledTask = scheduledTasks.find((item) => `scheduled:${item.key}` === presetKey) ?? null;
   const groupedPresets = templates.filter((item) => item.group === groupKey);
+  const groupedScheduledTasks = groupKey === "scheduled" ? scheduledTasks : [];
   const workflowGroups = Array.from(
     templates.reduce((groups, item) => {
       if (!groups.has(item.group)) groups.set(item.group, item.groupName || item.group);
       return groups;
     }, new Map<string, string>())
-  ).map(([key, name]) => ({ key, name }));
+  );
+  if (scheduledTasks.length > 0 && !workflowGroups.some(([key]) => key === "scheduled")) {
+    workflowGroups.push(["scheduled", "定时任务"]);
+  }
+  const workflowGroupItems = workflowGroups.map(([key, name]) => ({ key, name }));
 
   useEffect(() => {
-    fetchAnalysisTaskTemplates()
-      .then((result) => {
-        const nextTemplates = result.items.map(mapAnalysisTaskTemplate);
+    Promise.all([fetchAnalysisTaskTemplates(), fetchScheduledTasks(), fetchPremarketRecommendations()])
+      .then(([templateResult, scheduledResult, recommendationResult]) => {
+        const nextTemplates = templateResult.items.map(mapAnalysisTaskTemplate);
+        const nextScheduledTasks = scheduledResult.items.filter((item) => item.category === "analysis");
         if (nextTemplates.length === 0) {
           setMessage("没有可用的分析工作流");
-          return;
         }
         setTemplates(nextTemplates);
+        setScheduledTasks(nextScheduledTasks);
+        setRecommendations(recommendationResult);
         const standard = nextTemplates.find((item) => item.key === "standard") ?? nextTemplates[0];
-        setPresetKey(standard.key);
-        setGroupKey(standard.group);
+        if (standard) {
+          setPresetKey(standard.key);
+          setGroupKey(standard.group);
+        } else if (nextScheduledTasks[0]) {
+          setPresetKey(`scheduled:${nextScheduledTasks[0].key}`);
+          setGroupKey("scheduled");
+        }
       })
       .catch((err: unknown) => setMessage(err instanceof Error ? err.message : "分析工作流加载失败"))
       .finally(() => setLoadingTemplates(false));
@@ -1553,6 +1641,10 @@ function AssistedAnalysisPage() {
     const firstPreset = templates.find((item) => item.group === nextGroupKey);
     if (firstPreset) {
       selectPreset(firstPreset);
+      return;
+    }
+    if (nextGroupKey === "scheduled" && scheduledTasks[0]) {
+      selectScheduledTask(scheduledTasks[0]);
     }
   }
 
@@ -1563,6 +1655,65 @@ function AssistedAnalysisPage() {
     setExecutionEvents([]);
     setReport(null);
     setMessage("");
+  }
+
+  function selectScheduledTask(nextTask: ScheduledTask) {
+    setPresetKey(`scheduled:${nextTask.key}`);
+    setTask(null);
+    setRun(null);
+    setExecutionEvents([]);
+    setReport(null);
+    setScheduleEnabled(nextTask.enabled);
+    setScheduleTime(nextTask.daily_time || "08:30");
+    setMessage("");
+  }
+
+  async function refreshScheduledTask(taskKey: string) {
+    const [scheduledResult, recommendationResult] = await Promise.all([
+      fetchScheduledTasks(),
+      fetchPremarketRecommendations()
+    ]);
+    const nextScheduledTasks = scheduledResult.items.filter((item) => item.category === "analysis");
+    setScheduledTasks(nextScheduledTasks);
+    setRecommendations(recommendationResult);
+    const refreshed = nextScheduledTasks.find((item) => item.key === taskKey);
+    if (refreshed) {
+      setScheduleEnabled(refreshed.enabled);
+      setScheduleTime(refreshed.daily_time || "08:30");
+    }
+  }
+
+  async function saveSchedule() {
+    if (!scheduledTask) return;
+    setSavingSchedule(true);
+    setMessage("");
+    try {
+      const updated = await updateScheduledTask(scheduledTask.key, {
+        enabled: scheduleEnabled,
+        daily_time: scheduledTask.configurable ? scheduleTime : null
+      });
+      setScheduledTasks((items) => items.map((item) => item.key === updated.key ? updated : item));
+      setMessage("定时设置已保存");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "定时设置保存失败");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function runScheduledAnalysis() {
+    if (!scheduledTask) return;
+    setRunning(true);
+    setMessage("");
+    try {
+      const result = await runScheduledTask(scheduledTask.key);
+      await refreshScheduledTask(scheduledTask.key);
+      setMessage(result.status === "success" ? result.message : `执行失败：${result.message}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "定时任务执行失败");
+    } finally {
+      setRunning(false);
+    }
   }
 
   useEffect(() => {
@@ -1644,21 +1795,46 @@ function AssistedAnalysisPage() {
       {message ? <div className="notice">{message}</div> : null}
       <section className="assistant-workbench">
         <aside className="workflow-navigator" aria-label="分析工作流">
-          <div className="workbench-section-heading"><strong>任务工作流</strong><span>{templates.length} 项</span></div>
+          <div className="workbench-section-heading"><strong>任务工作流</strong><span>{templates.length + scheduledTasks.length} 项</span></div>
           {loadingTemplates ? <div className="empty-hint">正在加载工作流</div> : (
             <>
               <div className="workflow-group-tabs" role="tablist" aria-label="任务分组">
-                {workflowGroups.map((group) => <button aria-selected={groupKey === group.key} className={groupKey === group.key ? "active" : ""} key={group.key} onClick={() => selectGroup(group.key)} role="tab" type="button"><span>{group.name}</span><small>{templates.filter((item) => item.group === group.key).length}</small></button>)}
+                {workflowGroupItems.map((group) => <button aria-selected={groupKey === group.key} className={groupKey === group.key ? "active" : ""} key={group.key} onClick={() => selectGroup(group.key)} role="tab" type="button"><span>{group.name}</span><small>{templates.filter((item) => item.group === group.key).length + (group.key === "scheduled" ? scheduledTasks.length : 0)}</small></button>)}
               </div>
               <div className="workflow-list">
                 {groupedPresets.map((item) => <button className={presetKey === item.key ? "active" : ""} disabled={isTaskActive(task)} key={item.key} onClick={() => selectPreset(item)} type="button"><div><strong>{item.name}</strong><span>{item.description}</span></div><ChevronRight size={15} /></button>)}
+                {groupedScheduledTasks.map((item) => <button className={presetKey === `scheduled:${item.key}` ? "active" : ""} key={item.key} onClick={() => selectScheduledTask(item)} type="button"><div><strong>{item.name}</strong><span>{item.description}</span></div><CalendarClock size={15} /></button>)}
               </div>
             </>
           )}
         </aside>
 
         <main className="analysis-task-surface">
-          {preset ? (
+          {scheduledTask ? (
+            <>
+              <header className="selected-workflow-header">
+                <div><span>定时任务</span><h2>{scheduledTask.name}</h2><p>{scheduledTask.description}</p></div>
+                <StatusBadge tone={!scheduledTask.enabled ? "neutral" : scheduledTask.last_status === "failed" ? "red" : scheduledTask.last_status === "success" ? "green" : "amber"}>{!scheduledTask.enabled ? "已停用" : scheduledTask.last_status === "failed" ? "上次失败" : scheduledTask.last_status === "success" ? "运行正常" : "等待首跑"}</StatusBadge>
+              </header>
+              <div className="scheduled-task-config">
+                <div className="scheduled-config-heading"><div><CalendarClock size={18} /><div><strong>执行计划</strong><span>{scheduledTask.schedule}</span></div></div><button className="btn btn-primary" disabled={running} onClick={runScheduledAnalysis} type="button"><Play size={15} />{running ? "正在执行" : "立即执行"}</button></div>
+                <div className="scheduled-config-controls">
+                  <label className="switch-row"><input checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} type="checkbox" /><span><strong>启用自动执行</strong><small>关闭后仍可手动执行</small></span></label>
+                  <label className="schedule-time-field"><span>盘前执行时间</span><input disabled={!scheduleEnabled || !scheduledTask.configurable} type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} /></label>
+                  <button className="btn" disabled={savingSchedule || !scheduleTime} onClick={saveSchedule} type="button"><Save size={15} />{savingSchedule ? "保存中" : "保存设置"}</button>
+                </div>
+              </div>
+              <section className="scheduled-run-status">
+                <div className="workbench-section-heading"><strong>最近执行</strong><span>{scheduledTask.last_finished_at ? formatDateTime(scheduledTask.last_finished_at) : "尚未执行"}</span></div>
+                <dl>
+                  <div><dt>候选来源</dt><dd>{recommendations.source_label}</dd></div>
+                  <div><dt>任务状态</dt><dd>{scheduledTask.last_status || "等待首跑"}</dd></div>
+                  <div><dt>执行结果</dt><dd>{scheduledTask.last_message || "尚无执行记录"}</dd></div>
+                  <div><dt>结果日期</dt><dd>{recommendations.scan_date || "尚未生成"}</dd></div>
+                </dl>
+              </section>
+            </>
+          ) : preset ? (
             <>
               <header className="selected-workflow-header">
                 <div><span>{preset.groupName || preset.group}</span><h2>{preset.name}</h2><p>{preset.description}</p></div>
@@ -1687,8 +1863,8 @@ function AssistedAnalysisPage() {
         </main>
 
         <aside className="analysis-result-pane">
-          <div className="workbench-section-heading"><strong>分析结果</strong>{run ? <StatusBadge tone={run.status === "completed" ? "green" : "amber"}>{run.status}</StatusBadge> : null}</div>
-          {report ? <div className="inline-report"><div className="inline-report-meta"><FileText size={16} /><span>{report.task_key}</span><a href={analysisTaskReportDownloadUrl(report.task_key)}>下载</a></div><pre>{report.content}</pre></div> : run ? <div className="result-summary"><span>最终结论</span><h3>{String(run.result.conclusion || "分析已完成")}</h3><p>{String(run.result.summary || "报告正在归档")}</p><div><strong>{String(run.result.confidence ?? 0)}%</strong><span>置信度</span></div></div> : <div className="result-empty"><FileText size={28} /><strong>报告将在这里生成</strong><span>阶段结果会先实时出现，最终报告通过质量校验后原位展示。</span></div>}
+          <div className="workbench-section-heading"><strong>{scheduledTask ? "盘前推荐结果" : "分析结果"}</strong>{scheduledTask ? <span>{recommendations.items.length} 只</span> : run ? <StatusBadge tone={run.status === "completed" ? "green" : "amber"}>{run.status}</StatusBadge> : null}</div>
+          {scheduledTask ? (recommendations.items.length > 0 ? <div className="scheduled-recommendation-list"><div className="recommendation-result-meta"><strong>{recommendations.scan_date}</strong><span>{recommendations.generated_at ? formatDateTime(recommendations.generated_at) : ""}</span></div>{recommendations.items.map((item) => <div className="scheduled-recommendation-row" key={item.symbol}><span className="recommendation-rank">{item.rank}</span><div><strong>{item.name}<small>{item.symbol}</small></strong><p>{item.reason}</p></div><span className="recommendation-score">{item.score}</span></div>)}</div> : <div className="result-empty"><CalendarClock size={28} /><strong>尚未生成盘前推荐</strong><span>到达设定时间后自动执行，也可以点击“立即执行”生成结果。</span></div>) : report ? <div className="inline-report"><div className="inline-report-meta"><FileText size={16} /><span>{report.task_key}</span><a href={analysisTaskReportDownloadUrl(report.task_key)}>下载</a></div><pre>{report.content}</pre></div> : run ? <div className="result-summary"><span>最终结论</span><h3>{String(run.result.conclusion || "分析已完成")}</h3><p>{String(run.result.summary || "报告正在归档")}</p><div><strong>{String(run.result.confidence ?? 0)}%</strong><span>置信度</span></div></div> : <div className="result-empty"><FileText size={28} /><strong>报告将在这里生成</strong><span>阶段结果会先实时出现，最终报告通过质量校验后原位展示。</span></div>}
         </aside>
       </section>
     </div>

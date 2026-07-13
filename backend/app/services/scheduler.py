@@ -8,8 +8,14 @@ from sqlalchemy import delete, desc, select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.models.data_source import DataPremarketRecommendation, DataProvider, DataScheduledTaskRun, DataWatchlistItem
-from app.services.data_fetcher import get_klines, get_market_news, get_realtime_quote
+from app.models.data_source import (
+    DataPremarketRecommendation,
+    DataProvider,
+    DataScheduledTaskConfig,
+    DataScheduledTaskRun,
+    DataWatchlistItem,
+)
+from app.services.data_fetcher import get_announcements, get_company_news, get_klines, get_market_news, get_realtime_quote, get_research_reports
 from app.services.data_source_health import check_provider_health
 from app.services.trading_time import is_trading_day, is_trading_time, now_cn
 
@@ -18,12 +24,14 @@ from app.services.trading_time import is_trading_day, is_trading_time, now_cn
 class ScheduledTask:
     key: str
     name: str
+    description: str
     interval_seconds: int
     enabled: bool
     runner: Callable[[Session], str]
     trading_time_only: bool = False
     daily_at: time | None = None
     trading_day_only: bool = False
+    category: str = "maintenance"
 
     @property
     def schedule(self) -> str:
@@ -51,6 +59,20 @@ def _refresh_watchlist_quotes(db: Session) -> str:
 def _refresh_market_news(db: Session) -> str:
     news = get_market_news(db, limit=30)
     return f"刷新市场快讯 {len(news.items)} 条"
+
+
+def _refresh_watchlist_content(db: Session) -> str:
+    items = db.scalars(select(DataWatchlistItem).order_by(DataWatchlistItem.sort_order)).all()
+    refreshed = 0
+    for item in items:
+        get_company_news(db, item.symbol, limit=30)
+        get_announcements(db, item.symbol, limit=30)
+        try:
+            get_research_reports(db, item.symbol, limit=20)
+        except Exception:
+            pass
+        refreshed += 1
+    return f"刷新自选股新闻与公告 {refreshed} 只"
 
 
 def _refresh_daily_klines(db: Session) -> str:
@@ -140,6 +162,7 @@ TASKS: dict[str, ScheduledTask] = {
     "data_source_health_check": ScheduledTask(
         key="data_source_health_check",
         name="数据源健康检查",
+        description="定期检查已配置数据源的可用性。",
         interval_seconds=30 * 60,
         enabled=True,
         runner=_run_health_check,
@@ -147,6 +170,7 @@ TASKS: dict[str, ScheduledTask] = {
     "watchlist_quote_refresh": ScheduledTask(
         key="watchlist_quote_refresh",
         name="自选股实时行情刷新",
+        description="交易时段内刷新自选股最新行情。",
         interval_seconds=30,
         enabled=True,
         runner=_refresh_watchlist_quotes,
@@ -155,13 +179,23 @@ TASKS: dict[str, ScheduledTask] = {
     "market_news_refresh": ScheduledTask(
         key="market_news_refresh",
         name="市场快讯刷新",
+        description="定期拉取最新市场快讯。",
         interval_seconds=3 * 60,
         enabled=True,
         runner=_refresh_market_news,
     ),
+    "watchlist_content_refresh": ScheduledTask(
+        key="watchlist_content_refresh",
+        name="自选股新闻与公告刷新",
+        description="刷新关注池的个股新闻、公告并去重归档。",
+        interval_seconds=15 * 60,
+        enabled=True,
+        runner=_refresh_watchlist_content,
+    ),
     "watchlist_daily_kline_refresh": ScheduledTask(
         key="watchlist_daily_kline_refresh",
         name="自选股日 K 刷新",
+        description="更新自选股日线数据。",
         interval_seconds=10 * 60,
         enabled=True,
         runner=_refresh_daily_klines,
@@ -169,11 +203,13 @@ TASKS: dict[str, ScheduledTask] = {
     "premarket_watchlist_analysis": ScheduledTask(
         key="premarket_watchlist_analysis",
         name="每日盘前候选分析",
+        description="交易日盘前扫描当前自选股候选池，生成当日优先关注列表。",
         interval_seconds=24 * 60 * 60,
         enabled=True,
         runner=_run_premarket_analysis,
         daily_at=time(8, 30),
         trading_day_only=True,
+        category="analysis",
     ),
 }
 
@@ -211,31 +247,87 @@ def run_task_once(task_key: str) -> DataScheduledTaskRun:
         return run
 
 
-async def _task_loop(task: ScheduledTask) -> None:
-    while True:
-        await asyncio.sleep(_seconds_until_next_run(task))
-        if not task.enabled:
-            continue
-        if task.trading_day_only and not is_trading_day():
-            continue
-        if task.trading_time_only and not is_trading_time():
-            continue
-        await asyncio.to_thread(run_task_once, task.key)
+def get_task_settings(db: Session, task: ScheduledTask) -> tuple[bool, time | None]:
+    config = db.get(DataScheduledTaskConfig, task.key)
+    enabled = config.enabled if config else task.enabled
+    daily_at = task.daily_at
+    if config and config.daily_time and task.daily_at:
+        hour, minute = (int(part) for part in config.daily_time.split(":", maxsplit=1))
+        daily_at = time(hour, minute)
+    return enabled, daily_at
 
 
-def _seconds_until_next_run(task: ScheduledTask) -> float:
-    if not task.daily_at:
-        return float(task.interval_seconds)
-    current = now_cn()
-    target = current.replace(
-        hour=task.daily_at.hour,
-        minute=task.daily_at.minute,
-        second=0,
-        microsecond=0,
+def update_task_settings(db: Session, task_key: str, *, enabled: bool, daily_time: str | None) -> DataScheduledTaskConfig:
+    task = TASKS.get(task_key)
+    if not task:
+        raise KeyError(task_key)
+    if not task.daily_at and daily_time is not None:
+        raise ValueError("This task does not support a daily execution time.")
+    config = db.get(DataScheduledTaskConfig, task_key)
+    if not config:
+        config = DataScheduledTaskConfig(task_key=task_key)
+    config.enabled = enabled
+    config.daily_time = daily_time if task.daily_at else None
+    db.add(config)
+    db.commit()
+    db.refresh(config)
+    return config
+
+
+def _last_run_local_date(db: Session, task_key: str):
+    latest = db.scalar(
+        select(DataScheduledTaskRun)
+        .where(DataScheduledTaskRun.task_key == task_key)
+        .order_by(desc(DataScheduledTaskRun.id))
+        .limit(1)
     )
-    if target <= current:
-        target += timedelta(days=1)
-    return max((target - current).total_seconds(), 1)
+    if not latest:
+        return None
+    started_at = latest.started_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return started_at.astimezone(now_cn().tzinfo).date()
+
+
+async def _daily_task_loop(task: ScheduledTask) -> None:
+    while True:
+        should_run = False
+        wait_seconds = 30.0
+        with SessionLocal() as db:
+            enabled, daily_at = get_task_settings(db, task)
+            current = now_cn()
+            target = current.replace(
+                hour=(daily_at or task.daily_at or time()).hour,
+                minute=(daily_at or task.daily_at or time()).minute,
+                second=0,
+                microsecond=0,
+            )
+            already_ran_today = _last_run_local_date(db, task.key) == current.date()
+            should_run = enabled and current >= target and not already_ran_today
+            if should_run and task.trading_day_only and not is_trading_day():
+                should_run = False
+            next_target = target if current < target else target + timedelta(days=1)
+            wait_seconds = min(max((next_target - current).total_seconds(), 1), 30)
+        if should_run:
+            await asyncio.to_thread(run_task_once, task.key)
+            continue
+        await asyncio.sleep(wait_seconds)
+
+
+async def _interval_task_loop(task: ScheduledTask) -> None:
+    while True:
+        await asyncio.sleep(float(task.interval_seconds))
+        with SessionLocal() as db:
+            enabled, _ = get_task_settings(db, task)
+        if enabled and (not task.trading_time_only or is_trading_time()):
+            await asyncio.to_thread(run_task_once, task.key)
+
+
+async def _task_loop(task: ScheduledTask) -> None:
+    if task.daily_at:
+        await _daily_task_loop(task)
+    else:
+        await _interval_task_loop(task)
 
 
 def start_scheduler() -> None:

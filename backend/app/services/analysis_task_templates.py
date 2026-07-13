@@ -270,24 +270,6 @@ TASK_TEMPLATES: list[AnalysisTaskTemplate] = [
             "输出：市场温度、板块强弱、资金方向、风险提示和关注清单。",
         ),
     ),
-    AnalysisTaskTemplate(
-        key="daily_review",
-        group="scheduled",
-        group_name="定时任务",
-        name="每日收盘复盘",
-        description="适合后续接入定时任务，生成市场和关注池复盘。",
-        agent_keys=["policy_industry", "news", "capital_flow", "risk", "research_director"],
-        include_report=True,
-        reference="go-stock scheduled review task",
-        focus=["收盘复盘", "板块主线", "资金变化", "新闻事件", "明日观察"],
-        required_output=["收盘报告", "明日观察点", "风险事件"],
-        default_prompt=_prompt(
-            "任务：每日收盘复盘，参考 go-stock 定时任务里的 market_analysis / stock_analysis。",
-            "流程：收盘后汇总市场、板块、新闻、资金、风险，再生成可归档报告。",
-            "必须覆盖：今日市场状态、板块主线、资金变化、重要新闻、风险事件、明日观察点。",
-            "输出：收盘复盘报告。当前版本先作为手动长任务运行，后续接入定时任务调度。",
-        ),
-    ),
 ]
 
 TASK_TEMPLATES_BY_KEY = {template.key: template for template in TASK_TEMPLATES}

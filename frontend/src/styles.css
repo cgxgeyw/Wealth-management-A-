@@ -493,9 +493,79 @@ button {
   margin-top: 12px;
 }
 
-.chat-layout.agent-collapsed {
-  grid-template-columns: 52px minmax(0, 1fr) 300px;
+.conversation-sidebar {
+  display: grid;
+  grid-template-rows: 45px minmax(0, 1fr);
+  height: calc(100vh - 132px);
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-strong);
 }
+
+.conversation-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 45px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px 8px 12px;
+  font-size: 13px;
+}
+
+.conversation-list {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.conversation-sidebar-head .icon-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.conversation-list button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 7px 8px;
+  color: var(--ink-soft);
+  background: transparent;
+  text-align: left;
+}
+
+.conversation-list button:hover { background: var(--panel-muted); }
+.conversation-list button.active { border-color: #9bb9d6; color: #183b5b; background: #eef4fa; }
+.conversation-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-list small { color: var(--muted); font-size: 10px; }
+
+.chat-toolbar,
+.chat-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chat-toolbar select {
+  width: min(220px, 30vw);
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 26px 4px 8px;
+  color: var(--ink-soft);
+  background: var(--panel);
+}
+
+.composer { align-items: center; }
+.composer .input { min-width: 0; flex: 1 1 auto; }
+.composer .btn { flex: 0 0 auto; min-width: 64px; white-space: nowrap; }
 
 .multi-agent-layout {
   display: grid;
@@ -655,6 +725,64 @@ button {
 .analysis-request-editor .task-request-textarea { min-height: 180px; resize: vertical; line-height: 1.65; }
 .request-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .request-editor-footer > span { color: var(--muted); font-size: 11px; }
+
+.scheduled-task-config {
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 20px 20px;
+  background: var(--panel-strong);
+}
+
+.scheduled-config-heading,
+.scheduled-config-heading > div,
+.scheduled-config-controls,
+.switch-row,
+.schedule-time-field {
+  display: flex;
+  align-items: center;
+}
+
+.scheduled-config-heading { justify-content: space-between; gap: 16px; }
+.scheduled-config-heading > div { gap: 10px; min-width: 0; }
+.scheduled-config-heading > div > div { display: grid; gap: 3px; }
+.scheduled-config-heading strong { font-size: 13px; }
+.scheduled-config-heading span { color: var(--muted); font-size: 11px; }
+
+.scheduled-config-controls {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(150px, 190px) auto;
+  gap: 12px;
+}
+
+.switch-row { gap: 9px; min-width: 0; }
+.switch-row input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.switch-row > span { display: grid; gap: 2px; }
+.switch-row strong { font-size: 12px; }
+.switch-row small { color: var(--muted); font-size: 10px; }
+
+.schedule-time-field { justify-content: space-between; gap: 10px; }
+.schedule-time-field > span { color: var(--muted); font-size: 11px; }
+.schedule-time-field input { width: 92px; min-height: 32px; border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; color: var(--ink); background: var(--panel); }
+
+.scheduled-run-status { display: grid; }
+.scheduled-run-status dl { display: grid; margin: 0; }
+.scheduled-run-status dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 14px; border-bottom: 1px solid var(--border); padding: 11px 20px; }
+.scheduled-run-status dt { color: var(--muted); font-size: 11px; }
+.scheduled-run-status dd { margin: 0; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+
+.scheduled-recommendation-list { display: grid; align-content: start; min-height: 0; overflow-y: auto; }
+.recommendation-result-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 9px 12px; }
+.recommendation-result-meta strong { font-size: 12px; }
+.recommendation-result-meta span { color: var(--muted); font-size: 10px; }
+.scheduled-recommendation-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: start; gap: 9px; border-bottom: 1px solid var(--border); padding: 12px; }
+.recommendation-rank { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; color: var(--muted); background: var(--panel-muted); font-size: 10px; }
+.scheduled-recommendation-row > div { display: grid; gap: 5px; min-width: 0; }
+.scheduled-recommendation-row strong { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.scheduled-recommendation-row strong small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.scheduled-recommendation-row p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.recommendation-score { color: var(--blue); font-size: 14px; font-weight: 700; }
 
 .live-stage-section { border-top: 1px solid var(--border); }
 .task-progress-overview { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 12px; }
@@ -1974,32 +2102,56 @@ tbody tr.row-active {
   min-height: 420px;
   max-height: 58vh;
   overflow-y: auto;
-  padding-top: 12px;
+  gap: 12px;
+  padding-top: 16px;
 }
 
 .msg {
   max-width: 78ch;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px;
-  background: var(--panel);
+  border: 1px solid #dbe3eb;
+  border-radius: 6px;
+  padding: 11px 12px;
+  color: var(--ink-soft);
+  background: #f8fafc;
 }
 
 .msg.user {
   justify-self: end;
-  border-color: var(--ink);
-  color: #ffffff;
-  background: var(--ink);
+  border-color: #9bb9d6;
+  color: #183b5b;
+  background: #eef4fa;
 }
 
 .msg p {
   margin: 0;
-  color: var(--ink-soft);
+  color: inherit;
+  line-height: 1.65;
   white-space: pre-wrap;
 }
 
 .msg.muted {
-  background: #fffef8;
+  border-color: #ead9a7;
+  color: #71591d;
+  background: #fffaf0;
+}
+
+.chat-turn-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid currentColor;
+  font-size: 10px;
+  opacity: 0.72;
+}
+
+.chat-turn-meta code {
+  overflow: hidden;
+  max-width: 32ch;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conclusion {
@@ -3166,6 +3318,8 @@ tbody tr.row-active {
     display: grid;
   }
 
+  .composer { grid-template-columns: minmax(0, 1fr) auto; }
+
   .agent-editor-toolbar .panel-actions {
     justify-content: flex-start;
   }
@@ -3207,6 +3361,11 @@ tbody tr.row-active {
   .selected-workflow-header { padding: 14px; }
   .workflow-route { padding: 8px 14px; }
   .analysis-request-editor { padding: 14px; }
+  .scheduled-task-config { padding: 14px; }
+  .scheduled-config-heading { align-items: stretch; flex-direction: column; }
+  .scheduled-config-heading .btn { justify-content: center; }
+  .scheduled-config-controls { grid-template-columns: 1fr; }
+  .schedule-time-field { justify-content: flex-start; }
   .analysis-request-editor .task-request-textarea { min-height: 150px; }
   .request-editor-footer { align-items: stretch; flex-direction: column; }
   .request-editor-footer .btn { justify-content: center; }

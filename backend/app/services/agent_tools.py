@@ -15,6 +15,7 @@ from app.schemas.knowledge import KnowledgeSearchRequest
 from app.services.data_fetcher import (
     DataFetchError,
     get_announcements,
+    get_company_news,
     get_dragon_tiger,
     get_financial_statements,
     get_fund_flow,
@@ -464,28 +465,11 @@ def _indicators_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
 def _stock_news_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:
     symbol = _require_text(params, "symbol")
     limit = _int_param(params, "limit", 30, 1, 100)
-    normalized_symbol = symbol.strip().lower().removeprefix("sh").removeprefix("sz").removeprefix("bj")
-    profile = get_stock_profile(symbol)
-    keywords = [normalized_symbol]
-    if profile:
-        keywords.append(profile.name)
     try:
-        news = get_market_news(db, limit=100)
+        news = get_company_news(db, symbol=symbol, limit=limit)
     except DataFetchError as exc:
         raise AgentToolError(str(exc), status_code=502) from exc
-    filtered = [
-        item
-        for item in news.items
-        if any(keyword and keyword in f"{item.title}{item.content}" for keyword in keywords)
-        or normalized_symbol in item.related_stocks
-    ]
-    payload = _model_to_dict(news)
-    payload["items"] = [
-        _model_to_dict(item) if not isinstance(item, dict) else item
-        for item in filtered[:limit]
-    ]
-    payload["symbol"] = normalized_symbol
-    return payload
+    return _model_to_dict(news)
 
 
 def _announcements_tool(db: Session, params: dict[str, Any]) -> dict[str, Any]:

@@ -2,13 +2,14 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.db.session import SessionLocal
 from app.main import app
 from app.services.agent_skills import assigned_skill_catalog, assigned_skill_instructions, load_assigned_skill
-from app.services.agent_orchestrator import _normalize_final_artifact, _parse_json_object
+from app.services.agent_orchestrator import _normalize_final_artifact, _parse_json_object, _tool_call_params
 from app.schemas.data_source import (
     AnnouncementItem,
     AnnouncementResponse,
@@ -100,6 +101,17 @@ def test_agent_artifact_json_repair_and_normalization() -> None:
     assert normalized["confidence"] == 68
     assert normalized["risks"] == ["追高风险"]
     assert normalized["horizon"] == "短期：谨慎观察（1-2周）；中期：偏多布局（1-3个月）"
+
+
+def test_agent_artifact_parser_rejects_unstructured_markdown() -> None:
+    assert _parse_json_object("## 分析结论\n\n这是一段 Markdown，不是 JSON。") == {}
+
+
+def test_tool_call_arguments_repair_common_json_errors() -> None:
+    params, error = _tool_call_params({"arguments": "{'symbol':'002837','limit':30,}"})
+
+    assert error == ""
+    assert params == {"symbol": "002837", "limit": 30}
 
 
 def test_analysis_task_lifecycle_and_report(monkeypatch, tmp_path) -> None:
@@ -660,9 +672,40 @@ def test_single_agent_chat_uses_agent_tools(monkeypatch) -> None:
     body = response.json()
     assert body["agent_key"] == "technical"
     assert body["model_status"] == "llm_completed"
+    assert body["conversation_id"].startswith("conv_")
+    assert body["turn_id"].startswith("turn_")
     assert body["tool_calls"]
     assert body["tool_calls"][0]["tool_key"] == "stock.quote"
     assert "技术面" in body["content"]
+    trace = client.get(f"/api/agent-chat/conversations/{body['conversation_id']}?turn_id={body['turn_id']}")
+    assert trace.status_code == 200
+    assert [item["event_type"] for item in trace.json()["items"]] == [
+        "turn_started", "model_request", "model_response", "tool_started", "tool_completed",
+        "model_request", "model_response", "turn_completed",
+    ]
+
+
+def test_single_agent_chat_records_when_tool_limit_is_reached(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.agent_chat.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.agent_chat.execute_tool",
+        lambda db, tool_key, params: {"symbol": params.get("symbol"), "price": 90.0},
+    )
+    monkeypatch.setattr(
+        "app.services.agent_chat._request_chat_turn",
+        lambda *_args: {"tool_calls": [{"id": "chat-call", "function": {"name": "tool__stock_quote", "arguments": '{\"symbol\":\"300750\"}'}}]},
+    )
+
+    with TestClient(app) as client:
+        client.patch("/api/agents/technical", json={"tools": ["stock.quote"], "change_note": "chat limit test"})
+        response = client.post("/api/agent-chat/technical", json={"message": "300750", "max_tool_calls": 1})
+
+        assert response.status_code == 200
+        body = response.json()
+        trace = client.get(f"/api/agent-chat/conversations/{body['conversation_id']}?turn_id={body['turn_id']}")
+
+    assert "工具调用已达到本轮上限" in body["content"]
+    assert any(item["event_type"] == "tool_limit_reached" for item in trace.json()["items"])
 
 
 def test_agent_test_run_preview() -> None:
@@ -846,7 +889,7 @@ def test_agent_news_tools_execute_with_permissions(monkeypatch) -> None:
             ],
         )
 
-    monkeypatch.setattr("app.services.agent_tools.get_market_news", fake_market_news)
+    monkeypatch.setattr("app.services.agent_tools.get_company_news", lambda db, symbol, limit=30: fake_market_news(db, limit))
     monkeypatch.setattr("app.services.agent_tools.get_announcements", fake_announcements)
     monkeypatch.setattr("app.services.agent_tools.get_research_reports", fake_reports)
 
@@ -878,7 +921,7 @@ def test_agent_news_tools_execute_with_permissions(monkeypatch) -> None:
 
     assert news.status_code == 200
     news_items = news.json()["output"]["items"]
-    assert len(news_items) == 1
+    assert len(news_items) == 2
     assert news_items[0]["id"] == "1"
     assert announcements.status_code == 200
     assert announcements.json()["output"]["items"][0]["title"] == "年度权益分派公告"
@@ -1313,3 +1356,93 @@ def test_agent_run_uses_llm_result_when_configured(monkeypatch) -> None:
     assert result["model_status"] == "agent_pipeline"
     assert result["quality_gate"]["passed"] is True
     assert result["confidence"] == 68
+
+
+def test_agent_run_retries_disconnect_and_repairs_non_json(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.agent_orchestrator.settings.llm_api_key", "test-key")
+    calls = 0
+
+    def fake_agent_turn(_db, _model, messages, tools, temperature):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        if calls == 2:
+            return {"content": "## 投研结论\n\n当前应保持审慎。"}
+        assert tools == []
+        assert "严格 Schema" in messages[-1]["content"]
+        report = valid_pipeline_result("修复后的最终报告")
+        return {"content": json.dumps({
+            "title": report["title"],
+            "executive_summary": report["summary"],
+            "conclusion": "审慎观察",
+            "horizon": "短线",
+            "confidence": 62,
+            "key_evidence": ["已获得上游证据"],
+            "risks": ["模型服务可能瞬时断开"],
+            "watch_items": ["成交量"],
+            "markdown_report": report["markdown_report"],
+        }, ensure_ascii=False)}
+
+    monkeypatch.setattr("app.services.agent_orchestrator._request_agent_turn", fake_agent_turn)
+
+    with TestClient(app) as client:
+        client.patch(
+            "/api/agents/research_director",
+            json={"tools": [], "change_note": "structured repair regression test"},
+        )
+        created = client.post(
+            "/api/agent-runs",
+            json={"query": "测试断线重试和 JSON 修复", "agent_keys": ["research_director"]},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed"
+    assert created.json()["result"]["quality_gate"]["passed"] is True
+    assert calls == 3
+
+
+def test_agent_run_forces_structured_finalization_after_tool_budget(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.agent_orchestrator.settings.llm_api_key", "test-key")
+    executed = 0
+
+    def fake_execute_tool(db, tool_key: str, params: dict) -> dict:
+        nonlocal executed
+        executed += 1
+        return {"symbol": params["symbol"], "price": 68.56, "provider_key": "pytest"}
+
+    def fake_agent_turn(_db, _model, messages, tools, temperature):
+        if tools:
+            call_number = sum(1 for item in messages if item["role"] == "tool") + 1
+            return {
+                "tool_calls": [{
+                    "id": f"repeat-call-{call_number}",
+                    "function": {"name": "tool__stock_quote", "arguments": '{"symbol":"002837"}'},
+                }]
+            }
+        assert "工具调用阶段已经结束" in messages[-1]["content"]
+        return {"content": json.dumps({
+            "summary": "行情证据已经收集，阶段分析完成。",
+            "findings": ["最新价格为 68.56"],
+            "evidence": [{"fact": "价格为 68.56", "source": "stock.quote", "support": "支持当前行情判断"}],
+            "risks": [],
+            "open_questions": [],
+        }, ensure_ascii=False)}
+
+    monkeypatch.setattr("app.services.agent_orchestrator.execute_tool", fake_execute_tool)
+    monkeypatch.setattr("app.services.agent_orchestrator._request_agent_turn", fake_agent_turn)
+
+    with TestClient(app) as client:
+        client.patch(
+            "/api/agents/data_steward",
+            json={"tools": ["stock.quote"], "change_note": "tool budget regression test"},
+        )
+        created = client.post(
+            "/api/agent-runs",
+            json={"query": "测试工具预算收口", "agent_keys": ["data_steward"]},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed"
+    assert created.json()["result"]["agent_summaries"][0]["status"] == "completed"
+    assert executed == 5

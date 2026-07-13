@@ -39,6 +39,37 @@ FINAL_AGENT_KEY = "research_director"
 SYNTHESIS_AGENT_KEYS = {"bull", "bear", FINAL_AGENT_KEY}
 
 
+def _output_contract(is_final: bool) -> str:
+    if is_final:
+        return (
+            "你是工作流的最终汇总 Agent。必须综合全部上游阶段产物并直接回答用户需求。"
+            "最终响应只能是一个 JSON 对象，不得包含解释、前后缀或 Markdown 代码围栏。严格 Schema："
+            '{"title":"string","executive_summary":"string","conclusion":"string","horizon":"string",'
+            '"confidence":0,"key_evidence":["string"],"risks":["string"],"watch_items":["string"],'
+            '"markdown_report":"string"}。confidence 必须是 0 到 100 的整数；key_evidence、risks、watch_items '
+            "必须是字符串数组；markdown_report 必须是完整可读的 Markdown 分析报告字符串，包含结论、依据、"
+            "反证或风险、观察条件。JSON 字符串内的换行必须正确转义。禁止输出工具执行计数或占位内容。"
+        )
+    return (
+        "你是工作流的专业分析阶段。最终响应只能是一个 JSON 对象，不得包含解释、前后缀或 Markdown 代码围栏。"
+        '严格 Schema：{"summary":"string","findings":["string"],'
+        '"evidence":[{"fact":"string","source":"string","support":"string"}],'
+        '"risks":["string"],"open_questions":["string"]}。findings 和 evidence 必须非空；risks 和 '
+        "open_questions 没有内容时返回空数组。每项 evidence 必须说明事实、来源或工具以及它如何支持判断；"
+        "禁止只汇报调用了多少工具。"
+    )
+
+
+def _repair_instruction(is_final: bool, validation_errors: list[str]) -> str:
+    return (
+        "上一条响应未通过结构化产物校验。只允许依据已经获得的内容修复 JSON 格式、字段类型和缺失字段；"
+        "不得新增事实，不得调用工具，不得输出解释或代码围栏。"
+        + _output_contract(is_final)
+        + "校验错误："
+        + "；".join(validation_errors)
+    )
+
+
 @dataclass(frozen=True)
 class AgentExecutionConfig:
     key: str
@@ -223,45 +254,59 @@ def _run_agent_tool_calls(
         },
     )
     steps: list[AgentRunStep] = []
-    repair_attempted = False
+    repair_attempts = 0
+    tool_rounds = 0
+    finalize_prompt_added = False
     last_response = ""
-    timeout_retries = 0
-    for _ in range(6):
-        turn_tools = [] if repair_attempted else allowed
-        try:
-            message = _request_agent_turn(db, agent.model, messages, turn_tools, agent.temperature)
-            timeout_retries = 0
-        except httpx.TimeoutException as exc:
-            _emit_event(on_event, {"event_type": "model_response", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "retrying" if timeout_retries == 0 else "failed", "payload": {"error": str(exc), "retry": timeout_retries + 1}})
-            if timeout_retries == 0:
-                timeout_retries += 1
-                continue
-            return steps, ""
-        except httpx.HTTPError as exc:
-            _emit_event(on_event, {"event_type": "model_response", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "failed", "payload": {"error": str(exc)}})
+    for _ in range(8):
+        force_json = repair_attempts > 0 or tool_rounds >= 5
+        if force_json and not finalize_prompt_added:
+            messages.append({"role": "user", "content": "工具调用阶段已经结束。现在必须直接返回最终结构化产物。" + _output_contract(is_final)})
+            finalize_prompt_added = True
+        turn_tools = [] if force_json else allowed
+        message: dict[str, Any] | None = None
+        for request_attempt in range(3):
+            try:
+                message = _request_agent_turn(db, agent.model, messages, turn_tools, agent.temperature)
+                break
+            except httpx.HTTPError as exc:
+                retryable = _retryable_model_error(exc)
+                will_retry = retryable and request_attempt < 2
+                _emit_event(on_event, {"event_type": "model_response", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "retrying" if will_retry else "failed", "payload": {"error": str(exc), "retry": request_attempt + 1}})
+                if not will_retry:
+                    return steps, ""
+            except (KeyError, ValueError) as exc:
+                will_retry = request_attempt < 2
+                _emit_event(on_event, {"event_type": "model_response", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "retrying" if will_retry else "failed", "payload": {"error": str(exc), "retry": request_attempt + 1}})
+                if not will_retry:
+                    return steps, ""
+        if message is None:
             return steps, ""
         tool_calls = message.get("tool_calls") or []
         _emit_event(on_event, {"event_type": "model_response", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "completed", "payload": {"content": str(message.get("content") or ""), "tool_call_count": len(tool_calls) if isinstance(tool_calls, list) else 0}})
+        if force_json and isinstance(tool_calls, list) and tool_calls:
+            validation_errors = ["结构化输出阶段仍然请求了工具。"]
+            if repair_attempts < 2:
+                repair_attempts += 1
+                messages.append({"role": "user", "content": _repair_instruction(is_final, validation_errors)})
+                _emit_event(on_event, {"event_type": "artifact_repair", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "retrying", "payload": {"attempt": repair_attempts, "validation_errors": validation_errors}})
+                continue
+            return steps, last_response
         if not isinstance(tool_calls, list) or not tool_calls:
             last_response = str(message.get("content") or "")
             parsed = _parse_json_object(last_response)
             if is_final:
                 parsed = _normalize_final_artifact(parsed)
             validation_errors = _validate_final_artifact(parsed) if is_final else _validate_stage_artifact(parsed)
-            if validation_errors and not repair_attempted:
-                messages.append({"role": "assistant", "content": last_response})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "上一条最终响应未通过结构化产物校验。只修复 JSON 格式和缺失字段，不新增事实、"
-                            "不调用工具、不输出解释或 Markdown 代码围栏。校验错误：" + "；".join(validation_errors)
-                        ),
-                    }
-                )
-                repair_attempted = True
+            if validation_errors and repair_attempts < 2:
+                if last_response:
+                    messages.append({"role": "assistant", "content": last_response})
+                repair_attempts += 1
+                messages.append({"role": "user", "content": _repair_instruction(is_final, validation_errors)})
+                _emit_event(on_event, {"event_type": "artifact_repair", "run_key": run_key, "agent_key": agent.key, "agent_name": agent.name, "status": "retrying", "payload": {"attempt": repair_attempts, "validation_errors": validation_errors}})
                 continue
             return steps, last_response
+        tool_rounds += 1
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
         for tool_call in tool_calls[:8]:
             output: dict[str, Any] | None = None
@@ -345,16 +390,7 @@ def _build_agent_messages(
     if not render_variables.get("stock_name"):
         render_variables["stock_name"] = render_variables.get("analysis_subject", "")
     current_step_goal = _render(agent.task_prompt, render_variables).strip()
-    output_contract = (
-        "你是工作流的最终汇总 Agent。必须综合全部上游阶段产物并直接回答用户需求。"
-        "最终响应必须是一个 JSON 对象，字段为 title、executive_summary、conclusion、horizon、confidence、"
-        "key_evidence、risks、watch_items、markdown_report。markdown_report 必须是完整可读的 Markdown 分析报告，"
-        "包含结论、依据、反证或风险、观察条件；禁止输出工具执行计数或占位内容。"
-        if is_final
-        else
-        "你是工作流的专业分析阶段。最终响应必须是一个 JSON 对象，字段为 summary、findings、evidence、risks、"
-        "open_questions。每项证据必须说明事实、来源或工具以及它如何支持判断；禁止只汇报调用了多少工具。"
-    )
+    output_contract = _output_contract(is_final)
     skill_catalog_instruction = (
         "可用 Skill 目录：" + json.dumps(agent.skills, ensure_ascii=False)
         + "。这里只提供名称和描述；确实需要某项方法时，调用 skill__load 获取完整 instruction，"
@@ -486,6 +522,23 @@ def _agent_tool_definitions(agent: AgentExecutionConfig, include_report: bool) -
     return definitions
 
 
+def _retryable_model_error(exc: httpx.HTTPError) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status in {408, 409, 429} or status >= 500
+    return isinstance(
+        exc,
+        (
+            httpx.TimeoutException,
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.PoolTimeout,
+        ),
+    )
+
+
 def _request_agent_turn(db: Session, preferred_model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]], temperature: float) -> dict[str, Any]:
     runtime = get_model_runtime(db, "chat", preferred_model)
     with httpx.Client(timeout=runtime.timeout_seconds) as client:
@@ -497,11 +550,20 @@ def _request_agent_turn(db: Session, preferred_model: str, messages: list[dict[s
         if tools:
             request_body["tools"] = [{"type": item["type"], "function": item["function"]} for item in tools]
             request_body["tool_choice"] = "auto"
+        else:
+            request_body["response_format"] = {"type": "json_object"}
         response = client.post(
             runtime.base_url.rstrip("/") + "/chat/completions",
             headers={"Authorization": f"Bearer {runtime.api_key}", "Content-Type": "application/json"},
             json=request_body,
         )
+        if not tools and response.status_code in {400, 422}:
+            request_body.pop("response_format", None)
+            response = client.post(
+                runtime.base_url.rstrip("/") + "/chat/completions",
+                headers={"Authorization": f"Bearer {runtime.api_key}", "Content-Type": "application/json"},
+                json=request_body,
+            )
         response.raise_for_status()
     message = response.json()["choices"][0]["message"]
     if not isinstance(message, dict):
@@ -512,10 +574,16 @@ def _request_agent_turn(db: Session, preferred_model: str, messages: list[dict[s
 def _tool_call_params(function: Any) -> tuple[dict[str, Any], str]:
     if not isinstance(function, dict):
         return {}, "模型返回了无效的工具调用。"
+    raw_arguments = str(function.get("arguments") or "{}").strip()
+    if not raw_arguments.startswith("{"):
+        return {}, "模型返回的工具参数不是 JSON 对象。"
     try:
-        params = json.loads(str(function.get("arguments") or "{}"))
+        params = json.loads(raw_arguments)
     except json.JSONDecodeError:
-        return {}, "模型返回的工具参数不是有效 JSON。"
+        try:
+            params = repair_json(raw_arguments, return_objects=True)
+        except (ValueError, TypeError, OSError):
+            return {}, "模型返回的工具参数不是有效 JSON。"
     return (params, "") if isinstance(params, dict) else ({}, "模型返回的工具参数必须是对象。")
 
 
@@ -625,7 +693,11 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     last_brace = text.rfind("}")
     if first_brace >= 0 and last_brace > first_brace:
         candidates.append(text[first_brace:last_brace + 1])
-    candidates.append(text)
+    if text.startswith("{") and text.endswith("}"):
+        candidates.append(text)
+
+    if not candidates:
+        return {}
 
     for candidate in candidates:
         try:

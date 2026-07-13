@@ -205,12 +205,30 @@ DEFAULT_PROVIDERS = [
         "cache_ttl_seconds": 60,
     },
     {
+        "key": "sina_stock_news",
+        "name": "新浪个股资讯",
+        "type": "http",
+        "auth_type": "none",
+        "base_url": "https://vip.stock.finance.sina.com.cn",
+        "test_url": "https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllNewsStock/symbol/sz300750.phtml",
+        "cache_ttl_seconds": 600,
+    },
+    {
         "key": "eastmoney_announcement",
         "name": "东方财富公告",
         "type": "http",
         "auth_type": "none",
         "base_url": "https://np-anotice-stock.eastmoney.com",
         "test_url": "https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=1&page_index=1&ann_type=A&client_source=web&stock_list=300750",
+        "cache_ttl_seconds": 3600,
+    },
+    {
+        "key": "cninfo_announcement",
+        "name": "巨潮资讯公告",
+        "type": "http",
+        "auth_type": "none",
+        "base_url": "https://www.cninfo.com.cn",
+        "test_url": "https://www.cninfo.com.cn",
         "cache_ttl_seconds": 3600,
     },
     {
@@ -286,8 +304,9 @@ DEFAULT_ROUTES = [
     ("minute_kline", "get_minute_kline", ["eastmoney_push2his", "sina_kline"]),
     ("realtime_quote", "get_realtime_quote", ["tencent_quote"]),
     ("market_news", "get_market_news", ["cls"]),
-    ("announcement", "get_announcements", ["eastmoney_announcement"]),
-    ("fundamental_snapshot", "get_fundamentals", ["eastmoney_push2"]),
+    ("company_news", "get_company_news", ["sina_stock_news"]),
+    ("announcement", "get_announcements", ["eastmoney_announcement", "cninfo_announcement"]),
+    ("fundamental_snapshot", "get_fundamentals", ["eastmoney_push2", "tencent_quote"]),
     ("financial_statement", "get_financial_statements", ["eastmoney_datacenter"]),
     ("fund_flow", "get_fund_flow", ["eastmoney_push2"]),
     ("sector_snapshot", "get_sector_snapshots", ["eastmoney_push2"]),
@@ -498,8 +517,9 @@ def seed_defaults(db: Session) -> None:
         route = db.scalar(select(DataRoute).where(DataRoute.data_category == data_category))
         if route:
             if (
-                data_category == "research_report"
-                and route.provider_chain_json == json.dumps(["iwencai"], ensure_ascii=False)
+                (data_category == "research_report" and route.provider_chain_json == json.dumps(["iwencai"], ensure_ascii=False))
+                or (data_category == "announcement" and route.provider_chain_json == json.dumps(["eastmoney_announcement"], ensure_ascii=False))
+                or (data_category == "fundamental_snapshot" and route.provider_chain_json == json.dumps(["eastmoney_push2"], ensure_ascii=False))
             ):
                 route.provider_chain_json = json.dumps(chain, ensure_ascii=False)
                 db.add(route)

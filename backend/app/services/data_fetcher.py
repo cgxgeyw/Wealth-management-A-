@@ -5,10 +5,12 @@ from time import perf_counter
 from typing import Any, Callable
 
 import httpx
+from html import unescape
+import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.data_source import DataFetchLog, DataProvider, DataRoute
+from app.models.data_source import DataContentRecord, DataFetchLog, DataProvider, DataRoute
 from app.schemas.data_source import (
     AnnouncementItem,
     AnnouncementResponse,
@@ -102,6 +104,14 @@ def get_market_news(db: Session, limit: int = 30) -> NewsResponse:
     return _fetch_with_route(db, "market_news", "", {"limit": min(max(limit, 1), 100)})
 
 
+def get_company_news(db: Session, symbol: str, limit: int = 30) -> NewsResponse:
+    normalized_symbol = _normalize_symbol(symbol)
+    return _fetch_with_route(
+        db, "company_news", normalized_symbol,
+        {"symbol": normalized_symbol, "limit": min(max(limit, 1), 100)},
+    )
+
+
 def get_announcements(db: Session, symbol: str, limit: int = 20) -> AnnouncementResponse:
     normalized_symbol = _normalize_symbol(symbol)
     return _fetch_with_route(
@@ -158,7 +168,14 @@ def get_sector_snapshots(db: Session, sector_type: str = "industry", limit: int 
 
 
 def get_northbound_flow(db: Session, limit: int = 20) -> NorthboundFlowResponse:
-    return _fetch_with_route(db, "northbound_flow", "", {"limit": min(max(limit, 1), 100)})
+    normalized_limit = min(max(limit, 1), 100)
+    try:
+        return _fetch_with_route(db, "northbound_flow", "", {"limit": normalized_limit})
+    except DataFetchError as exc:
+        cached = _northbound_from_archive(db, normalized_limit)
+        if cached is None:
+            raise exc
+        return cached
 
 
 def get_research_reports(db: Session, symbol: str, limit: int = 10) -> ResearchReportResponse:
@@ -278,6 +295,7 @@ def _fetch_with_provider(
     started = perf_counter()
     try:
         value = fetcher(provider, params)
+        _persist_content_records(db, value)
         latency_ms = int((perf_counter() - started) * 1000)
         _CACHE[cache_key] = CacheEntry(
             expires_at=perf_counter() + resolve_cache_ttl(data_category, provider.cache_ttl_seconds),
@@ -314,10 +332,16 @@ def _resolve_fetcher(provider_key: str, data_category: str) -> Callable[[DataPro
         return _fetch_sina_kline
     if provider_key == "cls" and data_category == "market_news":
         return _fetch_cls_news
+    if provider_key == "sina_stock_news" and data_category == "company_news":
+        return _fetch_sina_stock_news
     if provider_key == "eastmoney_announcement" and data_category == "announcement":
         return _fetch_eastmoney_announcements
+    if provider_key == "cninfo_announcement" and data_category == "announcement":
+        return _fetch_cninfo_announcements
     if provider_key == "eastmoney_push2" and data_category == "fundamental_snapshot":
         return _fetch_eastmoney_fundamentals
+    if provider_key == "tencent_quote" and data_category == "fundamental_snapshot":
+        return _fetch_tencent_fundamentals
     if provider_key == "eastmoney_datacenter" and data_category == "financial_statement":
         return _fetch_eastmoney_financial_statement
     if provider_key == "eastmoney_push2" and data_category == "fund_flow":
@@ -462,6 +486,38 @@ def _fetch_cls_news(provider: DataProvider, params: dict[str, Any]) -> NewsRespo
     return NewsResponse(provider_key=provider.key, items=items)
 
 
+def _fetch_sina_stock_news(provider: DataProvider, params: dict[str, Any]) -> NewsResponse:
+    symbol = params["symbol"]
+    limit = int(params["limit"])
+    url = f"{provider.base_url}/corp/go.php/vCB_AllNewsStock/symbol/{_to_tencent_symbol(symbol)}.phtml"
+    text = _http_get_text(url, encoding="gb18030")
+    pattern = re.compile(
+        r"(?P<date>20\d{2}-\d{2}-\d{2})\s*&nbsp;\s*(?P<time>\d{2}:\d{2})"
+        r".*?<a[^>]+href=['\"](?P<url>[^'\"]+)['\"][^>]*>(?P<title>.*?)</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    items: list[NewsItem] = []
+    for match in pattern.finditer(text):
+        title = re.sub(r"<[^>]+>", "", unescape(match.group("title"))).strip()
+        if not title:
+            continue
+        article_url = unescape(match.group("url")).strip()
+        news_id = article_url.rsplit("/", 1)[-1].split("?", 1)[0] or f"{symbol}-{len(items)}"
+        items.append(NewsItem(
+            id=news_id,
+            title=title,
+            source="新浪财经",
+            publish_time=f"{match.group('date')} {match.group('time')}",
+            related_stocks=[symbol],
+            url=article_url,
+        ))
+        if len(items) >= limit:
+            break
+    if not items:
+        raise ValueError("新浪个股资讯未返回可解析新闻。")
+    return NewsResponse(provider_key=provider.key, items=items)
+
+
 def _fetch_eastmoney_announcements(
     provider: DataProvider,
     params: dict[str, Any],
@@ -505,6 +561,46 @@ def _fetch_eastmoney_announcements(
     return AnnouncementResponse(symbol=symbol, provider_key=provider.key, items=items)
 
 
+def _fetch_cninfo_announcements(provider: DataProvider, params: dict[str, Any]) -> AnnouncementResponse:
+    symbol = params["symbol"]
+    limit = int(params["limit"])
+    plate = "sse" if symbol.startswith(("5", "6", "9")) else "szse"
+    payload = _http_post_json(
+        f"{provider.base_url}/new/hisAnnouncement/query",
+        {
+            "stock": symbol,
+            "tabName": "fulltext",
+            "pageSize": str(limit),
+            "pageNum": "1",
+            "column": plate,
+            "category": "",
+            "plate": plate,
+            "searchkey": "",
+            "secid": "",
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "true",
+        },
+        headers={"Referer": "https://www.cninfo.com.cn/"},
+    )
+    items: list[AnnouncementItem] = []
+    for row in (payload.get("announcements") or [])[:limit]:
+        adjunct_url = str(row.get("adjunctUrl") or "")
+        announcement_id = str(row.get("announcementId") or adjunct_url or "")
+        items.append(AnnouncementItem(
+            id=announcement_id,
+            symbol=symbol,
+            title=str(row.get("announcementTitle") or ""),
+            publish_time=str(row.get("announcementTime") or ""),
+            category=str(row.get("announcementTypeName") or ""),
+            source="巨潮资讯",
+            url=f"https://static.cninfo.com.cn/{adjunct_url.lstrip('/')}" if adjunct_url else "",
+        ))
+    if not items:
+        raise ValueError("巨潮资讯未返回公告。")
+    return AnnouncementResponse(symbol=symbol, provider_key=provider.key, items=items)
+
+
 def _fetch_eastmoney_fundamentals(provider: DataProvider, params: dict[str, Any]) -> FundamentalResponse:
     symbol = params["symbol"]
     secid = _to_eastmoney_secid(symbol)
@@ -526,6 +622,21 @@ def _fetch_eastmoney_fundamentals(provider: DataProvider, params: dict[str, Any]
         name=data.get("f58") or "",
         provider_key=provider.key,
         metrics=metrics,
+    )
+
+
+def _fetch_tencent_fundamentals(provider: DataProvider, params: dict[str, Any]) -> FundamentalResponse:
+    quote = _fetch_tencent_quote(provider, params)
+    return FundamentalResponse(
+        symbol=quote.symbol,
+        name=quote.name,
+        provider_key=provider.key,
+        metrics=[
+            FundamentalMetric(key="pe_ttm", label="PE(TTM)", value=quote.pe_ttm, unit="倍"),
+            FundamentalMetric(key="pb", label="PB", value=quote.pb, unit="倍"),
+            FundamentalMetric(key="market_cap", label="总市值", value=quote.market_cap, unit="元"),
+            FundamentalMetric(key="turnover_rate", label="换手率", value=quote.turnover_rate, unit="%"),
+        ],
     )
 
 
@@ -888,6 +999,12 @@ def _http_get_text(url: str, encoding: str | None = None) -> str:
     raise DataFetchError("HTTP 请求失败。", "http_error")
 
 
+def _http_post_json(url: str, data: dict[str, str], headers: dict[str, str] | None = None) -> Any:
+    response = httpx.post(url, data=data, timeout=10.0, follow_redirects=True, headers=_headers(headers))
+    response.raise_for_status()
+    return response.json()
+
+
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
     headers = {
         "User-Agent": (
@@ -952,6 +1069,51 @@ def _record_failure(
         )
     )
     db.commit()
+
+
+def _persist_content_records(db: Session, value: Any) -> None:
+    if isinstance(value, NewsResponse):
+        records = [("news", item.source or value.provider_key, item.id, item.related_stocks[0] if item.related_stocks else "", item.title, item.content, item.url, item.publish_time, item.model_dump(mode="json")) for item in value.items]
+    elif isinstance(value, AnnouncementResponse):
+        records = [("announcement", item.source or value.provider_key, item.id, item.symbol, item.title, "", item.url, item.publish_time, item.model_dump(mode="json")) for item in value.items]
+    elif isinstance(value, ResearchReportResponse):
+        records = [("research_report", value.provider_key, item.id, item.stock_code or value.symbol, item.title, "", item.url, item.publish_date, item.model_dump(mode="json")) for item in value.items]
+    elif isinstance(value, NorthboundFlowResponse):
+        records = [("northbound_flow", value.provider_key, f"{item.trade_date}:{item.mutual_type}", "", item.mutual_type, "", "", item.trade_date, item.model_dump(mode="json")) for item in value.items]
+    else:
+        return
+    for content_type, source, external_id, symbol, title, content, url, published_at, payload in records:
+        if not external_id:
+            continue
+        row = db.scalar(select(DataContentRecord).where(
+            DataContentRecord.content_type == content_type,
+            DataContentRecord.source == source,
+            DataContentRecord.external_id == external_id,
+        ))
+        if row is None:
+            row = DataContentRecord(content_type=content_type, source=source, external_id=external_id)
+        row.symbol, row.title, row.content, row.url, row.published_at = symbol, title, content, url, published_at
+        row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+        db.add(row)
+    db.commit()
+
+
+def _northbound_from_archive(db: Session, limit: int) -> NorthboundFlowResponse | None:
+    rows = db.scalars(
+        select(DataContentRecord)
+        .where(DataContentRecord.content_type == "northbound_flow")
+        .order_by(DataContentRecord.updated_at.desc())
+        .limit(limit)
+    ).all()
+    if not rows:
+        return None
+    items: list[NorthboundFlowItem] = []
+    for row in rows:
+        try:
+            items.append(NorthboundFlowItem.model_validate(json.loads(row.payload_json)))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return NorthboundFlowResponse(provider_key="local_northbound_cache", items=items) if items else None
 
 
 def _cache_key(provider_key: str, data_category: str, params: dict[str, Any]) -> str:

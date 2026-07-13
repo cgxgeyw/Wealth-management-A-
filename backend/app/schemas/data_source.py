@@ -469,9 +469,13 @@ class DataSnapshotListResponse(BaseModel):
 class ScheduledTaskRead(BaseModel):
     key: str
     name: str
+    description: str = ""
+    category: str = "maintenance"
     interval_seconds: int
     schedule: str = ""
     enabled: bool
+    configurable: bool = False
+    daily_time: str | None = None
     last_status: str | None = None
     last_message: str | None = None
     last_started_at: datetime | None = None
@@ -480,6 +484,11 @@ class ScheduledTaskRead(BaseModel):
 
 class ScheduledTaskListResponse(BaseModel):
     items: list[ScheduledTaskRead]
+
+
+class ScheduledTaskUpdateRequest(BaseModel):
+    enabled: bool
+    daily_time: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 class ScheduledTaskRunRead(BaseModel):

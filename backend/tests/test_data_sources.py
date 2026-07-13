@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import sessionmaker
 
 import app.services.data_fetcher as data_fetcher
@@ -10,6 +10,7 @@ import app.services.scheduler as scheduler
 import app.services.stock_catalog as stock_catalog
 from app.db.session import Base
 from app.main import app
+from app.models.data_source import DataScheduledTaskConfig
 
 
 def test_list_default_providers() -> None:
@@ -485,6 +486,7 @@ def test_scheduled_task_manual_run_and_logs() -> None:
     scheduler.TASKS[task_key] = scheduler.ScheduledTask(
         key=task_key,
         name="Test noop task",
+        description="Test task",
         interval_seconds=3600,
         enabled=True,
         runner=lambda db: "ok",
@@ -529,6 +531,35 @@ def test_premarket_analysis_persists_ranked_watchlist_candidates(monkeypatch) ->
     assert result.json()["items"] == sorted(result.json()["items"], key=lambda item: item["score"], reverse=True)
     premarket_task = next(item for item in tasks.json()["items"] if item["key"] == "premarket_watchlist_analysis")
     assert premarket_task["schedule"] == "交易日 08:30"
+    assert premarket_task["category"] == "analysis"
+
+
+def test_scheduled_task_schedule_can_be_updated() -> None:
+    task_key = "premarket_watchlist_analysis"
+    with scheduler.SessionLocal() as db:
+        existing = db.get(DataScheduledTaskConfig, task_key)
+        previous = (existing.enabled, existing.daily_time) if existing else None
+    try:
+        with TestClient(app) as client:
+            updated = client.patch(
+                f"/api/data/scheduled-tasks/{task_key}",
+                json={"enabled": False, "daily_time": "07:45"},
+            )
+            listed = client.get("/api/data/scheduled-tasks")
+
+        assert updated.status_code == 200
+        assert updated.json()["enabled"] is False
+        assert updated.json()["daily_time"] == "07:45"
+        assert updated.json()["schedule"] == "交易日 07:45"
+        item = next(row for row in listed.json()["items"] if row["key"] == task_key)
+        assert item["enabled"] is False
+        assert item["daily_time"] == "07:45"
+    finally:
+        with scheduler.SessionLocal() as db:
+            db.execute(delete(DataScheduledTaskConfig).where(DataScheduledTaskConfig.task_key == task_key))
+            if previous:
+                db.add(DataScheduledTaskConfig(task_key=task_key, enabled=previous[0], daily_time=previous[1]))
+            db.commit()
 
 
 def test_market_news_alias(monkeypatch) -> None:

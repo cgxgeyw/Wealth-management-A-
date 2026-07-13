@@ -38,6 +38,7 @@ from app.schemas.data_source import (
     ScheduledTaskRead,
     ScheduledTaskRunListResponse,
     ScheduledTaskRunRead,
+    ScheduledTaskUpdateRequest,
     RealtimeQuote,
     WatchlistCreateRequest,
     WatchlistItemRead,
@@ -53,7 +54,15 @@ from app.services.data_fetcher import (
     get_realtime_quote,
 )
 from app.services.data_snapshots import create_analysis_snapshot
-from app.services.scheduler import TASKS, last_run_by_task, list_premarket_recommendations, list_task_runs, run_task_once
+from app.services.scheduler import (
+    TASKS,
+    get_task_settings,
+    last_run_by_task,
+    list_premarket_recommendations,
+    list_task_runs,
+    run_task_once,
+    update_task_settings,
+)
 
 router = APIRouter()
 
@@ -411,13 +420,22 @@ def list_scheduled_tasks(db: Session = Depends(get_db)) -> ScheduledTaskListResp
     items = []
     for task in TASKS.values():
         latest = latest_runs.get(task.key)
+        enabled, daily_at = get_task_settings(db, task)
+        schedule = task.schedule
+        if daily_at:
+            prefix = "交易日" if task.trading_day_only else "每日"
+            schedule = f"{prefix} {daily_at.strftime('%H:%M')}"
         items.append(
             ScheduledTaskRead(
                 key=task.key,
                 name=task.name,
+                description=task.description,
+                category=task.category,
                 interval_seconds=task.interval_seconds,
-                schedule=task.schedule,
-                enabled=task.enabled,
+                schedule=schedule,
+                enabled=enabled,
+                configurable=task.daily_at is not None,
+                daily_time=daily_at.strftime("%H:%M") if daily_at else None,
                 last_status=latest.status if latest else None,
                 last_message=latest.message if latest else None,
                 last_started_at=latest.started_at if latest else None,
@@ -425,6 +443,40 @@ def list_scheduled_tasks(db: Session = Depends(get_db)) -> ScheduledTaskListResp
             )
         )
     return ScheduledTaskListResponse(items=items)
+
+
+@router.patch("/scheduled-tasks/{task_key}", response_model=ScheduledTaskRead)
+def update_scheduled_task(
+    task_key: str,
+    payload: ScheduledTaskUpdateRequest,
+    db: Session = Depends(get_db),
+) -> ScheduledTaskRead:
+    task = TASKS.get(task_key)
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found.")
+    try:
+        update_task_settings(db, task_key, enabled=payload.enabled, daily_time=payload.daily_time)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    latest = last_run_by_task(db).get(task_key)
+    enabled, daily_at = get_task_settings(db, task)
+    prefix = "交易日" if task.trading_day_only else "每日"
+    schedule = f"{prefix} {daily_at.strftime('%H:%M')}" if daily_at else task.schedule
+    return ScheduledTaskRead(
+        key=task.key,
+        name=task.name,
+        description=task.description,
+        category=task.category,
+        interval_seconds=task.interval_seconds,
+        schedule=schedule,
+        enabled=enabled,
+        configurable=task.daily_at is not None,
+        daily_time=daily_at.strftime("%H:%M") if daily_at else None,
+        last_status=latest.status if latest else None,
+        last_message=latest.message if latest else None,
+        last_started_at=latest.started_at if latest else None,
+        last_finished_at=latest.finished_at if latest else None,
+    )
 
 
 @router.post("/scheduled-tasks/{task_key}/run", response_model=ScheduledTaskRunRead)

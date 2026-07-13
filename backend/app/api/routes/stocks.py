@@ -22,6 +22,7 @@ from app.schemas.data_source import (
 from app.services.data_fetcher import (
     DataFetchError,
     get_announcements,
+    get_company_news,
     get_dragon_tiger,
     get_financial_statements,
     get_fund_flow,
@@ -102,23 +103,10 @@ def indicators(
 
 @router.get("/{symbol}/news", response_model=NewsResponse)
 def stock_news(symbol: str, limit: int = 30, db: Session = Depends(get_db)) -> NewsResponse:
-    profile_result = get_stock_profile(symbol)
-    normalized_symbol = symbol.strip().lower().removeprefix("sh").removeprefix("sz").removeprefix("bj")
     try:
-        news = get_market_news(db, limit=100)
+        return get_company_news(db, symbol=symbol, limit=limit)
     except DataFetchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    keywords = [normalized_symbol]
-    if profile_result:
-        keywords.append(profile_result.name)
-    filtered = [
-        item
-        for item in news.items
-        if any(keyword and keyword in f"{item.title}{item.content}" for keyword in keywords)
-        or normalized_symbol in item.related_stocks
-    ]
-    return NewsResponse(provider_key=news.provider_key, items=filtered[: min(max(limit, 1), 100)])
 
 
 @router.get("/{symbol}/announcements", response_model=AnnouncementResponse)

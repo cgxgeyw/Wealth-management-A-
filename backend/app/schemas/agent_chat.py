@@ -11,6 +11,7 @@ class AgentChatMessage(BaseModel):
 
 class AgentChatRequest(BaseModel):
     message: str = Field(min_length=1)
+    conversation_id: str = Field(default="", max_length=80)
     symbol: str = ""
     variables: dict[str, str] = Field(default_factory=dict)
     history: list[AgentChatMessage] = Field(default_factory=list)
@@ -34,7 +35,28 @@ class AgentChatKnowledgeHit(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class AgentChatTraceEvent(BaseModel):
+    conversation_id: str
+    turn_id: str
+    agent_key: str
+    event_type: str
+    sequence: int
+    status: str
+    model: str = ""
+    detail: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+    created_at: datetime
+
+
+class AgentChatTraceResponse(BaseModel):
+    conversation_id: str
+    turn_id: str = ""
+    items: list[AgentChatTraceEvent] = Field(default_factory=list)
+
+
 class AgentChatResponse(BaseModel):
+    conversation_id: str
+    turn_id: str
     agent_key: str
     agent_name: str
     content: str

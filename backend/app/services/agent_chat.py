@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.agent import AgentConfig
-from app.models.agent_audit import AgentToolCallAudit
+from app.models.agent_audit import AgentChatTrace, AgentToolCallAudit
 from app.schemas.agent_chat import AgentChatKnowledgeHit, AgentChatRequest, AgentChatResponse, AgentChatToolCall
 from app.services.agent_tools import AgentToolError, execute_tool, get_tool_spec
 from app.services.agent_skills import assigned_skill_catalog, load_assigned_skill
@@ -28,14 +29,23 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
     variables = _build_variables(symbol, payload)
     tool_calls: list[AgentChatToolCall] = []
     knowledge_hits: list[AgentChatKnowledgeHit] = []
+    conversation_id = payload.conversation_id.strip() or f"conv_{uuid4().hex}"
+    turn_id = f"turn_{uuid4().hex}"
     fallback = _fallback_reply(agent, payload, symbol, tool_calls)
     model_status = "fallback_no_api_key"
     model = ""
     content = fallback
     runtime = get_model_runtime(db, "chat", agent.model)
+    sequence = 1
+    _record_trace(
+        db, conversation_id, turn_id, agent.key, sequence, "turn_started", "info", runtime.model,
+        {"max_tool_calls": payload.max_tool_calls, "history_count": len(payload.history)},
+    )
     if runtime.api_key:
         try:
-            content, tool_calls = _run_agent_tool_loop(db, agent, payload, variables)
+            content, tool_calls, sequence = _run_agent_tool_loop(
+                db, agent, payload, variables, conversation_id, turn_id, sequence,
+            )
             fallback = _fallback_reply(agent, payload, symbol, tool_calls)
             content = content or fallback
             model_status = "llm_completed"
@@ -44,7 +54,16 @@ def create_agent_chat_response(db: Session, agent_key: str, payload: AgentChatRe
             content = f"{fallback}\n\n模型调用失败：{exc}"
             model_status = "fallback_llm_error"
             model = runtime.model
+            _record_trace(db, conversation_id, turn_id, agent.key, sequence + 1, "model_error", "failed", model, {}, str(exc))
+    else:
+        _record_trace(db, conversation_id, turn_id, agent.key, sequence + 1, "model_unavailable", "failed", runtime.model, {}, "No API key available")
+    _record_trace(
+        db, conversation_id, turn_id, agent.key, sequence + 2, "turn_completed", model_status,
+        model, {"tool_call_count": len(tool_calls), "content_length": len(content)},
+    )
     return AgentChatResponse(
+        conversation_id=conversation_id,
+        turn_id=turn_id,
         agent_key=agent.key,
         agent_name=agent.name,
         content=content,
@@ -61,7 +80,10 @@ def _run_agent_tool_loop(
     agent: AgentConfig,
     payload: AgentChatRequest,
     variables: dict[str, str],
-) -> tuple[str, list[AgentChatToolCall]]:
+    conversation_id: str,
+    turn_id: str,
+    sequence: int,
+) -> tuple[str, list[AgentChatToolCall], int]:
     skill_catalog = assigned_skill_catalog(db, agent.key)
     allowed = _chat_tool_definitions(agent, skill_catalog)
     tool_by_function = {item["function"]["name"]: item["tool_key"] for item in allowed}
@@ -81,10 +103,14 @@ def _run_agent_tool_loop(
 
     calls: list[AgentChatToolCall] = []
     while len(calls) < payload.max_tool_calls:
+        sequence += 1
+        _record_trace(db, conversation_id, turn_id, agent.key, sequence, "model_request", "running", agent.model, {"round": sequence, "tool_call_count": len(calls)})
         message = _request_chat_turn(db, agent.model, messages, allowed, agent.temperature)
         requested = message.get("tool_calls") or []
+        sequence += 1
+        _record_trace(db, conversation_id, turn_id, agent.key, sequence, "model_response", "success", agent.model, {"round": sequence - 1, "tool_call_count": len(requested), "content_length": len(str(message.get("content") or ""))})
         if not isinstance(requested, list) or not requested:
-            return str(message.get("content") or ""), calls
+            return str(message.get("content") or ""), calls, sequence
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": requested})
         for tool_call in requested[: payload.max_tool_calls - len(calls)]:
             output: dict[str, Any] | None = None
@@ -92,6 +118,8 @@ def _run_agent_tool_loop(
             function_name = function.get("name") if isinstance(function, dict) else ""
             tool_key = tool_by_function.get(str(function_name), str(function_name))
             params, parse_error = _tool_call_params(function)
+            sequence += 1
+            _record_trace(db, conversation_id, turn_id, agent.key, sequence, "tool_started", "running", agent.model, {"tool_key": tool_key, "params": params})
             if function_name not in tool_by_function:
                 call = AgentChatToolCall(tool_key=tool_key, status="failed", error="模型请求了未授权工具。")
             elif parse_error:
@@ -108,6 +136,8 @@ def _run_agent_tool_loop(
             calls.append(call)
             db.add(AgentToolCallAudit(agent_key=agent.key, tool_key=tool_key, status=call.status, error=call.error))
             db.commit()
+            sequence += 1
+            _record_trace(db, conversation_id, turn_id, agent.key, sequence, "tool_completed", call.status, agent.model, {"tool_key": tool_key, "output_preview": call.output_preview}, call.error)
             messages.append(
                 {
                     "role": "tool",
@@ -119,8 +149,42 @@ def _run_agent_tool_loop(
                     ),
                 }
             )
+    sequence += 1
+    _record_trace(db, conversation_id, turn_id, agent.key, sequence, "model_request", "running", agent.model, {"round": sequence, "tool_call_count": len(calls), "final_after_tool_limit": True})
     message = _request_chat_turn(db, agent.model, messages, allowed, agent.temperature)
-    return str(message.get("content") or ""), calls
+    requested = message.get("tool_calls") or []
+    sequence += 1
+    if isinstance(requested, list) and requested:
+        _record_trace(db, conversation_id, turn_id, agent.key, sequence, "tool_limit_reached", "blocked", agent.model, {"tool_call_count": len(calls), "pending_tool_call_count": len(requested)})
+        return "工具调用已达到本轮上限，未执行后续工具请求。请查看该轮执行轨迹后重试。", calls, sequence
+    _record_trace(db, conversation_id, turn_id, agent.key, sequence, "model_response", "success", agent.model, {"final_after_tool_limit": True, "content_length": len(str(message.get("content") or ""))})
+    return str(message.get("content") or ""), calls, sequence
+
+
+def _record_trace(
+    db: Session,
+    conversation_id: str,
+    turn_id: str,
+    agent_key: str,
+    sequence: int,
+    event_type: str,
+    status: str,
+    model: str,
+    detail: dict[str, Any],
+    error: str = "",
+) -> None:
+    db.add(AgentChatTrace(
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        agent_key=agent_key,
+        event_type=event_type,
+        sequence=sequence,
+        status=status,
+        model=model,
+        detail_json=json.dumps(detail, ensure_ascii=False, default=str),
+        error=error,
+    ))
+    db.commit()
 
 
 def _chat_tool_definitions(agent: AgentConfig, skill_catalog: list[dict[str, str]]) -> list[dict[str, Any]]:
